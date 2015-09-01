@@ -1,306 +1,503 @@
-﻿# conditional module loading python 2/3
-try:
-    from tkinter import *
-    import tkinter.messagebox as messagebox, tkinter.filedialog as filedialog
-except ImportError:
-    from Tkinter import *
-    import tkMessageBox as messagebox, tkFileDialog as filedialog
-try:
-    import Scanner
-except:
-    pass
-import sys
+﻿import sys
 
 from functools import partial
 import time
+import traceback
+import importlib
 
-from diamond_demo.lib import Events
-from diamond_demo.hw.qupsi import *
+# conditional module loading python 2/3
+try:
+    import tkinter as Tk
+    import tkinter.messagebox as messagebox, tkinter.filedialog as filedialog
+except ImportError:
+    import Tkinter as Tk
+    import tkMessageBox as messagebox, tkFileDialog as filedialog
 
+import numpy as np
+import quantities as pq
+import traits.api as tr
 
-class ScanGui:
-    def __init__(self):
-        master = Tk()
+from .lib import Events
+from .Scanner import ScanningRFMeasurement, FluorescenceMap
 
+from yde.lib.misc.basics import Struct
+from yde.lib.quantity_traits import QuantityArrayTrait
+
+def catch2messagebox(fun):
+    """ wrap function to display a message when an exception happens
+    """
+    def wrapper(*args,**kw):
         try:
-            self.gs = Scanner.Scanner()
-        except(Exception):
-            messagebox.showerror("Init Scanner failed", sys.exc_info()[0])
-            self.gs = None
+            fun(*args,**kw)
+        except Exception as ex:
+#            raise
+            messagebox.showerror(
+                "Exception: "+str(ex),
+                ''.join(traceback.format_exc())
+            )
+            raise
+    return wrapper
+
+def handle_traits_error(object, trait_name, old_value, new_value):
+    messagebox.showerror(
+        'TraitsError',
+        'Failed to set trait "%s" of %s object to %s (was %s):\n'%(
+            trait_name, type(object).__name__, new_value, old_value
+        )+''.join(traceback.format_exc())
+    )
+    raise
+
+class ScanGui(tr.HasTraits):
+    _s = tr.Instance(ScanningRFMeasurement)
+    _frame = tr.Instance(Tk.Frame)
+    _tk_objects = tr.Dict(tr.Str,tr.Any)
+    _map_image = tr.Any(desc='matplotlib image')
+    _map_canvas = tr.Any(desc='matplotlib tkagg canvas')
+    _rate_plot = tr.Any(desc='matplotlib line')
+    _rate_ax = tr.Any(desc='matplotlib axes')
+    _rate_canvas = tr.Any(desc='matplotlib tkagg canvas')
+    _HBT_plot = tr.Any(desc='matplotlib line')
+    _HBT_ax = tr.Any(desc='matplotlib axes')
+    _HBT_canvas = tr.Any(desc='matplotlib tkagg canvas')
+
+    focus = tr.DelegatesTo('_s')
+    position = tr.DelegatesTo('_s')
+    background_rate = tr.DelegatesTo('_s')
+    auto_optimisation = tr.DelegatesTo('_s')
+    autoscale = tr.Bool(True)
+    normalise = tr.Bool(True)
+    correct = tr.Bool(True)
+    map = tr.Instance(FluorescenceMap,kw=dict(
+        shape = (10,10),
+        step = (0.5,0.5)*pq.um,
+    ))
+    rate_trace = QuantityArrayTrait(np.zeros(100)*pq.kHz,shape=(None,))
+
+    @classmethod
+    @catch2messagebox
+    def main(cls,**kw):
+        try:
+            tr.push_exception_handler(
+                handle_traits_error,
+                reraise_exceptions=False,
+                main=True
+            )
+            master = Tk.Tk()
+            self = cls(master, **kw)
+            master.mainloop()
+            self.deinit()
+        finally:
+            tr.pop_exception_handler()
+
+    def deinit(self):
+        self._s.deinit()
+
+    @staticmethod
+    def _config_hook(dct):
+        if "_sample_size_" in dct:
+            return Size(dct["height"], dct["width"])
+        if "_eval_" in dct:
+            ctxt = dict()
+            if "libraries" in dct:
+                for lib in dct["libraries"]:
+                    lib = str(lib)
+                    ctxt[lib] = importlib.import_module(lib)
+            return eval(dct["expression"],ctxt,ctxt)
+        return dct
+
+    def load_config(self, configFile):
+        import json
+
+        cfg = json.loads(open(configFile).read(), object_hook=self._config_hook)
+        imports = cfg.pop("imports",[])
+        settings = cfg.pop('settings',{})
+        for cfgfile in imports:
+            cfg.update(self.load_config(cfgfile))
+        for key,value in settings.items():
+            setattr(self, key, value)
+        return cfg
+
+    def __init__(self, master, **kw):
+        scanner_kw = dict()
+        for k in 'config_file'.split():
+            v = kw.pop(k,None)
+            if v is not None:
+                scanner_kw[k] = v
+        super(ScanGui,self).__init__(**kw)
+        self._s = ScanningRFMeasurement(**scanner_kw)
+        self._create_frame(master)
+
+    def _create_frame(self, master):
+
         # add our gui to the master Widget
-        frame = Frame(master)
+        frame = Tk.Frame(master)
         frame.pack()
+
+        s = Struct()
+        cb = catch2messagebox
 
         # we need one slider for focus
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
-        self.focusVar = StringVar()
-        self.focusEntry = Entry(frame, textvariable=self.focusVar)
-        self.focusEntry.grid(row=0, column=0)
-        self.focusButton = Button(frame, text="Set Focus", command=self.focusCallback)
-        self.focusButton.grid(row=0, column=1)
+        s.focusVar = Tk.StringVar()
+        self.on_trait_change(
+            lambda focus: s.focusVar.set(str(self.focus.mag_in(pq.V))),
+            'focus'
+        )
+        self.trait_property_changed('focus',self.focus)
+        s.focusEntry = Tk.Entry(frame, textvariable=s.focusVar)
+        s.focusEntry.grid(row=0, column=0)
+        s.focus = Tk.Button(
+            frame, text="Set Focus",
+            command=cb(lambda: self.trait_set(focus=float(s.focusVar.get())*pq.V))
+        )
+        s.focus.grid(row=0, column=1)
+
         # reconnectQuTau
-        self.rcQuTauButton = Button(frame, text="Reconnect QuTau", command=self.reconnectQuTau)
-        self.rcQuTauButton.grid(row=1, column=1)
+        s.rcQuTau = Tk.Button(
+            frame, text="Reconnect QuTau",
+            command=cb(lambda:self._s._tdc.reset)
+        )
+        s.rcQuTau.grid(row=1, column=1)
         # self.scale = Scale(frame,from_=0, to=5, resolution=0.001, orient=HORIZONTAL, command=self.ValueChanged)
         # self.scale.grid(row=0,column=1)
         # a checkbox for switching autoscale off or on
-        self.v = IntVar()
-        self.checkbutton = Checkbutton(frame, text="Autoscale", variable=self.v, command=self.checkButtonChanged)
-        self.checkbutton.select()
-        self.checkbutton.grid(row=3, column=5)
+        s.autoscaleVar = Tk.BooleanVar()
+        s.autoscale = Tk.Checkbutton(
+            frame, text="Autoscale",
+            variable=s.autoscaleVar,
+            command=cb(lambda:self.trait_set(autoscale=s.autoscaleVar.get()))
+        )
+        s.autoscale.select()
+        s.autoscale.grid(row=3, column=5)
         # add a button to loadConfig
-        self.openConfig = Button(frame, text="Open Config File", command=self.openConfigFile)
-        self.openConfig.grid(row=1, column=0)
+        s.openConfig = Tk.Button(
+            frame, text="Open Config File",
+            command = cb(self.open_config)
+        )
+        s.openConfig.grid(row=1, column=0)
 
         # add a button to start the scanning
-        self.startScan = Button(frame, text="Start Scan", command=lambda: self.startScanning(master=frame))
-        self.startScan.grid(row=2, column=0)
+        s.startScan = Tk.Button(
+            frame, text="Start Scan",
+            command=cb(lambda: self._s.scan(self.map))
+        )
+        s.startScan.grid(row=2, column=0)
 
         # add button to stop scanning
-        self.stopScan = Button(frame, text="Stop Scan", command=self.gs.stopScan)
-        self.stopScan.grid(row=2, column=1)
+        s.stopScan = Tk.Button(
+            frame, text="Stop Scan",
+            command = cb(self._s.stop)
+        )
+        s.stopScan.grid(row=2, column=1)
+
         # button for saving the state
-        self.saveStateButton = Button(frame, text="Save state", command=self.saveStateDialog)
-        self.saveStateButton.grid(row=3, column=2)
+        s.saveState = Tk.Button(frame, text="Save state", command=cb(self.save_state))
+        s.saveState.grid(row=3, column=2)
         # button for taking a picture with the ccd
-        self.ccdPic = Button(frame, text="Take Picture", command=self.takePictureDialog)
-        self.ccdPic.grid(row=3, column=3)
+        s.ccdPic = Tk.Button(frame, text="Take Picture", command=cb(self.take_picture))
+        s.ccdPic.grid(row=3, column=3)
         # button for resetting position
-        self.resetPos = Button(frame, text="Goto 0/0", command=partial(self.gs.setPoint, 0, 0))
-        self.resetPos.grid(row=3, column=4)
+        s.resetPos = Tk.Button(
+            frame, text="Goto 0/0",
+            command=cb(lambda:self._s.trait_set(position=(0,0)*pq.um)),
+        )
+        s.resetPos.grid(row=3, column=4)
 
         # Xslider
-        self.xsliderLabel = Label(frame, text="Y: ")
-        self.xsliderLabel.grid(row=0, column=5)
-        self.xslider = Scale(frame, from_=-0.03, to=0.03, resolution=0.00001, orient=HORIZONTAL, command=self.setX)
-        self.xslider.grid(row=0, column=6)
+        s.xVar = Tk.StringVar()
+        self.on_trait_change(
+            lambda pos: s.xVar.set(str(pos[0].mag_in(pq.um))),
+            'position'
+        )
+        s.yVar = Tk.StringVar()
+        self.on_trait_change(
+            lambda pos: s.yVar.set(str(pos[1].mag_in(pq.um))),
+            'position'
+        )
+        self.trait_property_changed('position',self.position)
+        s.xEntry = Tk.Entry(frame, textvariable=s.xVar)
+        s.xEntry.grid(row=0, column=5)
+        s.yEntry = Tk.Entry(frame, textvariable=s.yVar)
+        s.yEntry.grid(row=0, column=6)
+        s.setPos = Tk.Button(
+            frame, text="Set Position",
+            command=cb(lambda: self.trait_set(position=np.r_[
+                float(s.xVar.get()),
+                float(s.yVar.get()),
+            ]*pq.um))
+        )
+        s.setPos.grid(row=0, column=7)
 
-        # Yslider
-        self.xsliderLabel = Label(frame, text="X: ")
-        self.xsliderLabel.grid(row=0, column=7)
-        self.xslider = Scale(frame, from_=-0.03, to=0.03, resolution=0.00001, orient=HORIZONTAL, command=self.setY)
-        self.xslider.grid(row=0, column=8)
-
-        self.angleButton = Button(frame, text="Show Voltage", command=partial(self.showAngle, master=frame))
-        self.angleButton.grid(row=1, column=8)
+        s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
+        s.angleButton.grid(row=1, column=8)
         # button for showing hbt
-        self.hbtButton = Button(frame, text="HBT", command=partial(self.showHBT, master=frame))
-        self.hbtButton.grid(row=1, column=5)
-        self.hbtStopButton = Button(frame, text="Clear HBT", command=self.hideHBT)
-        self.hbtStopButton.grid(row=1, column=6)
-        self.hbtUnRunButton = Button(frame, text="Stop HBT", command=self.stopHBT)
-        self.hbtUnRunButton.grid(row=1, column=7)
+        s.hbtButton = Tk.Button(
+            frame, text="Reset HBT",
+            command=cb(lambda:self.reset_hbt(
+                float(s.binWidth.get())*pq.ns,
+                float(s.binCount.get())*pq.ns,
+            )),
+        )
+        s.hbtButton.grid(row=1, column=5)
+        s.hbtStopButton = Tk.Button(frame, text="Clear HBT", command=cb(self.hideHBT))
+        s.hbtStopButton.grid(row=1, column=6)
+        s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
+        s.hbtUnRunButton.grid(row=1, column=7)
         # checkbox for correction of HBT
-        self.corr = IntVar()
-        self.correctionCheck = Checkbutton(frame, text="Correction", variable=self.corr, command=self.checkCorrection)
-        self.correctionCheck.grid(row=3, column=6)
-        self.correctionSigToBack = StringVar()
-        self.correctionTextField = Entry(frame, textvariable=self.correctionSigToBack)
-        self.correctionTextField.grid(row=3, column=7)
-        self.correctionSigToBack.set("0.5")
+        s.correctionVar = Tk.BooleanVar()
+        s.correctionCheck = Tk.Checkbutton(
+            frame, text="Correction", variable=s.correctionVar,
+            command=cb(lambda:self.enable_correction(
+                s.correctionVar.get(),
+                float(s.bgrateVar.get())*pq.kHz,
+            )),
+        )
+        s.correctionCheck.grid(row=3, column=6)
+        s.bgrateVar = Tk.StringVar()
+        s.bgrateEntry = Tk.Entry(frame, textvariable=s.bgrateVar)
+        s.bgrateEntry.grid(row=3, column=7)
+        self.on_trait_change(
+            lambda rate: s.bgrateVar.set(str(rate.mag_in(pq.kHz))),
+            'background_rate'
+        )
+        self.trait_property_changed('background_rate',self.background_rate)
 
         # autocorrection
-        self.autocorr = IntVar()
-        self.autocorrCheck = Checkbutton(frame, text="autocorrection", variable=self.autocorr, command=self.autoCheck)
-        self.autocorrCheck.grid(row=2, column=8)
+        s.autocorrVar = Tk.BooleanVar()
+        s.autocorrCheck = Tk.Checkbutton(
+            frame, text="autocorrection", variable=s.autocorrVar,
+            command=cb(lambda:self.enable_autocorr(s.autocorrVar.get())),
+        )
+        s.autocorrCheck.grid(row=2, column=8)
         # checkbox for normalization
-        self.norm = IntVar()
-        self.normCheck = Checkbutton(frame, text="Normalization", variable=self.norm, command=self.checkNormalization)
-        self.normCheck.grid(row=3, column=8)
+        s.normVar = Tk.BooleanVar()
+        self.on_trait_change(
+            lambda n: s.normVar.set(n),
+            'normalise'
+        )
+        self.trait_property_changed('normalise',self.normalise)
+        s.normCheck = Tk.Checkbutton(
+            frame, text="Normalization", variable=s.normVar,
+            command=cb(lambda:self._s.trait_set(normalise=s.normVar.get())),
+        )
+        s.normCheck.grid(row=3, column=8)
 
         # checkbox for automatical maximum feedback
-        self.autofeedback = IntVar()
-        self.autofeedbackCheck = Checkbutton(frame, text="Auto feedback", variable=self.autofeedback,
-                                             command=self.checkAutofeedback)
-        self.autofeedbackCheck.grid(row=4, column=8)
-        self.autofeedbackCheck.select()
-
-        # add a checkformax thread restarter
-        self.check4MaxRestart = Button(frame, text="Restart CheckForMaxThread", command=self.restartThread)
-        self.check4MaxRestart.grid(row=5, column=8)
+        s.autofeedbackVar = Tk.BooleanVar()
+        self.on_trait_change(
+            lambda n: s.autofeedbackVar.set(n),
+            'auto_optimisation'
+        )
+        self.trait_property_changed('auto_optimisation',self.auto_optimisation)
+        s.autofeedbackCheck = Tk.Checkbutton(
+            frame, text="Auto feedback", variable=s.autofeedbackVar,
+            command=cb(lambda:self._s.trait_set(auto_optimisation=s.autofeedbackVar.get())),
+        )
+        s.autofeedbackCheck.grid(row=4, column=8)
+        s.autofeedbackCheck.select()
 
         # entry fields for binWidth and binCount
-        self.binWidth = StringVar()
-        self.binCount = StringVar()
-        self.widthlabel = Label(frame, text="Time Resolution")
-        self.countLabel = Label(frame, text="binCount")
-        self.widthEntry = Entry(frame, textvariable=self.binWidth)
-        self.countEntry = Entry(frame, textvariable=self.binCount)
-        self.binCount.set("20")
-        self.binWidth.set("1")
-        self.widthlabel.grid(row=0, column=3)
-        self.widthEntry.grid(row=0, column=4)
-        self.countLabel.grid(row=1, column=3)
-        self.countEntry.grid(row=1, column=4)
+        s.binWidth = Tk.StringVar()
+        s.binCount = Tk.StringVar()
+        s.widthlabel = Tk.Label(frame, text="Time Resolution")
+        s.countLabel = Tk.Label(frame, text="range")
+        s.widthEntry = Tk.Entry(frame, textvariable=s.binWidth)
+        s.countEntry = Tk.Entry(frame, textvariable=s.binCount)
+        s.binCount.set("20")
+        s.binWidth.set("1")
+        s.widthlabel.grid(row=0, column=3)
+        s.widthEntry.grid(row=0, column=4)
+        s.countLabel.grid(row=1, column=3)
+        s.countEntry.grid(row=1, column=4)
 
-        # add reference to ourself so we have access to the ui thread
-        self.gs.refToMain = self
+        self._create_scan_plot(frame)
+        self._create_rate_plot(frame)
+        self._create_HBT_plot(frame)
 
-        master.config()
-        # start gui
-        # register our eventhandling
-        self.mainloop = Events.TkInterCallback(frame)
-        # start eventhandling thread
-        try:
-            self.gs.setPoint(0, 0)
-            self.gs.setFocus(0)
-            self.mainloop["ratePlot"] = (partial(self.gs.plotCurrentRate, frame), False)
-            # give a reference to the string var of the correction textbox
-            self.mainloop["checkForMax"] = (partial(self.gs.checkForMax, self.correctionSigToBack), True, 10)
-            self.mainloop()
-            master.mainloop()
-            # start TK main thread for input handling
-            self.mainloop.stopUpdates()
-        except RuntimeError:
-            print("oooops")
-        self.mainloop.stopUpdates()
-        self.gs.ReleaseObjects()
-        self.gs = None
+        frame.config()
 
-    def restartThread(self):
-        self.mainloop.remove("checkForMax")
-        time.sleep(0.5)
-        self.mainloop["checkForMax"] = (partial(self.gs.checkForMax, self.correctionSigToBack), True, 10)
+        self._frame = frame
 
-    def reconnectQuTau(self):
-        # accept any device
-        TDC_init(-1)
-        # enable all channels
-        TDC_enableChannels(0xff)
-        # enable hbt
-        TDC_enableHbt(True)
-        # enable start stop
-        TDC_enableStartStop(True)
-        # exposure time in ms
-        self.gs.exposureTime = 1
-        TDC_setExposureTime(self.gs.exposureTime)
-        TDC_clearAllHistograms()
+    def _create_scan_plot(self, frame):
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
 
-    def createCanvas(self, figure, master):
+        f = Figure(figsize=(4, 4), dpi=100)
+        f.subplots_adjust(left=0.2)
+        ax = f.add_subplot(111)
+        xr,yr = self.map.extents.mag_in(pq.um)
+        img = ax.pcolorfast(
+            xr,yr,self.map.data.magnitude,
+            animated=True,
+            cmap='CMRmap',
+        )
+
+        toolbar_frame = Tk.Frame(frame)
+        toolbar_frame.grid(row=4, column=0, columnspan=2, rowspan=6)
+
+        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
+        canvas.show()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+        canvas.mpl_connect('button_press_event', self._map_clicked)
+
+        if False:
+            from matplotlib.backends.backend_tkagg import NavigationToolbar2TkAgg
+            return NavigationToolbar2TkAgg(canvas, master)
+
+        self._map_image = img
+        self._map_canvas = canvas
+
+
+    def _create_rate_plot(self, frame):
+        from matplotlib.figure import Figure
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-        return FigureCanvasTkAgg(figure, master=master)
+        f = Figure(figsize=(3, 1.5), dpi=100)
+        f.subplots_adjust(left=0.2)
+        ax = f.add_subplot(111)
 
-    def createToolbar(self, canvas, master):
-        from matplotlib.backends.backend_tkagg import NavigationToolbar2TkAgg
+        line, = ax.plot(np.tile(np.nan,100))
+        ax.set_xlim(0,100)
 
-        return NavigationToolbar2TkAgg(canvas, master)
 
-    def createFrame(self, master):
-        return Frame(master)
+        for item in (
+                [ax.title, ax.xaxis.label, ax.yaxis.label]
+                + ax.get_xticklabels() + ax.get_yticklabels()
+        ):
+            item.set_fontsize(8)
 
-    def showHBT(self, master=None):
-        if "HBT" in self.mainloop:
-            # there is a process running, stop it
-            self.gs.hbtLoop = False
-            time.sleep(0.8)
-        self.mainloop["HBT"] = (
-        partial(self.gs.showHBT, binWidth=float(self.binWidth.get()), binCount=int(self.binCount.get()), master=master),
-        False)
+
+        toolbar_frame = Tk.Frame(frame)
+        toolbar_frame.grid(row=4, column=4, columnspan=3, rowspan=6)
+
+        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
+        canvas.show()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+
+        self._rate_plot = line
+        self._rate_ax = ax
+        self._rate_canvas = canvas
+
+    @tr.on_trait_change('_s:_tdc:new_data')
+    def _new_rate_value(self,rates):
+        rate = rates.sum()
+        trace = self.rate_trace
+        trace[:-1] = trace[1:]
+        trace[-1] = rate
+        self.rate_trace = trace
+
+    def _rate_trace_changed(self,new):
+        self._rate_plot.set_ydata(new.magnitude)
+        if not self.autoscale:
+            self._rate_ax.set_ylim([0, 200])
+        else:
+            self._rate_ax.set_ylim([0, new.magnitude.max()])
+        self._rate_canvas.draw()
+
+    def reset_hbt(self, reso, range):
+        self._s.setup_hbt(reso,range)
 
     def hideHBT(self):
+        raise NotImplementedError
         self.gs.hbtRunning = False
 
-    def stopHBT(self):
-        self.gs.hbtLoop = False
+    def stop_hbt(self):
+        self._s.mode = 'on_target'
 
-    def showAngle(self, master=None):
-        messagebox.showinfo("Angles", "Phi: %s, Theta: %s" % (self.gs.currentVoltagePhi, self.gs.currentVoltageTheta))
+    def show_galvo_voltages(self):
+        messagebox.showinfo("Galvo voltages", "Phi: %s V, Theta: %s V" % tuple(
+            self._s._pos.galvo_voltage.mag_in(pq.V)
+        ))
 
-    def checkButtonChanged(self):
-        if self.v.get() == 0:
-            # offvalue
-            self.gs.autoscale = False
-        else:
-            self.gs.autoscale = True
-
-    def checkCorrection(self):
-        if self.corr.get() == 0:
-            self.gs.signalCorrection = False
-        else:
-            self.gs.sigToBack = float(self.correctionSigToBack.get())
+    def enable_correction(self,enable,background_rate):
+        if enable:
+            self.background_rate = background_rate
             self.gs.signalCorrection = True
-
-    def checkAutofeedback(self):
-        if self.autofeedback.get() == 0:
-            self.gs.noCheckForMax = False
         else:
-            self.gs.noCheckForMax = True
+            self.gs.signalCorrection = False
 
-    def autoCheck(self):
-        if self.autocorr.get() == 0:
+    def enable_autocorr(self,enable):
+        if not enable:
             self.gs.autocorrection = False
             self.correctionTextField.config(state="normal")
         else:
             self.gs.autocorrection = True
             self.correctionTextField.config(state="readonly")
 
-    def checkNormalization(self):
-        if self.norm.get() == 0:
-            self.gs.doNormalization = False
-        else:
-            self.gs.doNormalization = True
-
-    def stopScanning(self):
-        # self.startScan.config(state=NORMAL)
-        # self.stopScan.config(state=DISABLED)
-        self.mainloop["stop scanning"] = (self.gs.stopScan, False)
-
-    def ValueChanged(self, value):
-        print("set slider value", value)
-        self.gs.setFocus(float(value))
-
-    def setX(self, value):
-        try:
-            self.gs.setX(float(value), True)
-        except(Exception):
-            print("X Outside Range")
-
-    def setY(self, value):
-        try:
-            self.gs.setY(float(value), True)
-        except(Exception):
-            print("Y Outside Range")
-
-    def startScanning(self, master=None):
-        # self.startScan.config(state=DISABLED)
-        # self.stopScan.config(state=NORMAL)
-        self.mainloop["scanning"] = (partial(self.gs.scanSample, master=master, refToMain=self), False)
-
-    # self.mainloop["stayonmax"] = (self.gs.findMax(), True, 10)
-    # self.startScan.config(state=NORMAL)
-    # self.stopScan.config(state=DISABLED)
-
-    def saveStateDialog(self):
+    def save_state(self):
+        raise NotImplementedError
         f = filedialog.asksaveasfilename(filetypes=[("Numpy Binary", "*.npy")])
         if f:
             self.gs.saveState(f)
 
-    def takePictureDialog(self):
+    def take_picture(self):
+        raise NotImplementedError
         f = filedialog.asksaveasfilename(filetypes=[("PNG", "*.png")], defaultextension=".png")
         if f:
             self.gs.takePicture(f)
 
-    def openConfigFile(self):
+    def open_config(self):
         f = filedialog.askopenfile(initialdir="./configs", filetypes=[("ConfigFile", "*.cfg")])
         if f is not None:
-            self.gs.loadConfig(f.name, focus=self.focusVar)
+            self.load_config(f.name)
 
-    def loadHookFile(self):
-        f = filedialog.askopenfile(filetypes=[("HookFile", "*.hk")])
-        if f is not None:
-            hookName = self.gs.parseHook(f.name)
-            self.menu.add_command(label=hookName, command=partial(self.startHook, hookName))
 
-    def startHook(self, hookName):
-        try:
-            print("try to start hook: ", hookName)
-            func = getattr(self.gs, hookName)
-            func()
-        except:
-            messagebox.showerror("HookError", sys.exc_info()[0])
+    def _map_clicked(self,event):
+        pos = np.r_[event.xdata, event.ydata] * pq.um
+        print("Mouse clicked at ", pos)
+        self._s.choose_point(pos)
+        # TODO: plot crosshair
 
-    def focusCallback(self):
-        theFocus = float(self.focusVar.get())
-        self.gs.setFocus(theFocus)
+    @tr.on_trait_change('map:region_updated')
+    def _map_updated(self,event):
+        slice, update = event
+        data = self.data.magnitude
+        self._map_image.set_data(data)
+        self._map_image.set_clim(data.min(),data.max())
+        self._map_canvas.draw()
+
+############################
+
+
+    def _create_HBT_plot(self, frame):
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        f = Figure(figsize=(9, 3), dpi=100)
+        f.subplots_adjust(left=0.2)
+        ax = f.add_subplot(111)
+
+        ax.axhline(1,color='r')
+        ax.axhline(0.5,color='r')
+        line, = ax.plot([0],[0])
+
+        for item in (
+                [ax.title, ax.xaxis.label, ax.yaxis.label]
+                + ax.get_xticklabels() + ax.get_yticklabels()
+        ):
+            item.set_fontsize(8)
+
+
+        toolbar_frame = Tk.Frame(frame)
+        toolbar_frame.grid(row=7, column=2, columnspan=7, rowspan=3)
+
+        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
+        canvas.show()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+
+        self._HBT_plot = line
+        self._HBT_ax = ax
+        self._HBT_canvas = canvas
+
+    @tr.on_trait_change('_s:new_hbt')
+    def _HBT_updated(self, hbt):
+        self._HBT_plot.set_data(
+            hbt.bin_centres.mag_in(pq.ns),
+            hbt.g2(normalise=self.normalise,correct=self.correct)
+        )
+        self._HBT_canvas.draw()
+

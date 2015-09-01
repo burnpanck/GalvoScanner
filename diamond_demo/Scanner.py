@@ -1,11 +1,15 @@
 ﻿import time
+import importlib
 
 import numpy as np
 import quantities as pq
 import traits.api as tr
-import matplotlib.pyplot as plt
 
-from yde.lib.quantity_traits import QuantityTrait
+from yde.lib.quantity_traits import QuantityTrait, QuantityArrayTrait
+
+from .hwctrl.PhotonCounting import TDC
+from .hwctrl.Positioning import Positioning
+from .hwctrl.FlyCam import FlyCam
 
 #################################################################################
 
@@ -27,36 +31,49 @@ class Size:
         self.height /= other
         return self
 
-#########################################################################################
-
-################################################################
-# Exceptions which occur while scanning
-class AngleOutsideOfRangeException(Exception):
-    pass
-
-
-class VoltageCannotBeNegativeException(Exception):
-    pass
-
-
-class ConfigFileNotFoundException(Exception):
-    pass
-
 
 #################################################################
-def scannerObjects(dct):
-    if "_sample_size_" in dct:
-        return Size(dct["height"], dct["width"])
-    if "_eval_" in dct:
-        if "libraries" in dct:
-            for lib in dct["libraries"]:
-                exec("import " + str(lib))
-        return eval(dct["expression"])
-    return dct
+
 
 class FluorescenceMap(tr.HasStrictTraits):
-    range = QuantityArrayTrait(pq.um,shape=(2,2),desc='(x/y, min/max)')
+    start = QuantityArrayTrait(pq.um,shape=(2,))
     step = QuantityArrayTrait(pq.um,shape=(2,))
+    shape = tr.Array(int,shape=(2,))
+    stop = tr.Property(
+        handler = QuantityArrayTrait(pq.um,shape=(2,)),
+        fget = lambda self:self.start+(self.shape-1)*self.step,
+    )
+    centre = tr.Property(
+        handler = QuantityArrayTrait(pq.um,shape=(2,)),
+        fget=lambda self:self.start+0.5*(self.shape-1)*self.step,
+    )
+    data = QuantityArrayTrait(pq.kHz,shape=(None,None))
+    X = tr.Property(QuantityArrayTrait(pq.um,shape=(None,None)))
+    Y = tr.Property(QuantityArrayTrait(pq.um,shape=(None,None)))
+    extents = tr.Property(
+        handler = QuantityArrayTrait(pq.um,shape=(2,2),desc='(x/y,min/max'),
+        fget=lambda self:(
+            self.start
+            + np.c_[[-0.5,-0.5],self.shape-0.5].T*self.step
+        ).T,
+    )
+    region_updated = tr.Event(
+        tr.Tuple(tr.Any,tr.Any),
+        desc="slice, replacement data"
+    )
+
+    @tr.cached_property
+    def _get_X(self):
+        return self.start[0] + np.tile(np.arange(self.shape[0]),(self.shape[1],1))*self.step[0]
+
+    @tr.cached_property
+    def _get_Y(self):
+        return self.start[1] + np.tile(np.arange(self.shape[1]),(self.shape[0],1)).T*self.step[1]
+
+
+    def _data_default(self):
+        return np.zeros(self.shape[::-1])
+
 
     def config(self):
         # max and min x are half the sample size since we place the sample in such a way that it is centered arround the
@@ -74,678 +91,160 @@ class FluorescenceMap(tr.HasStrictTraits):
 
         self.dataArray = np.ones((len(self.ysteps), len(self.xsteps)), dtype=np.float64)
 
+    def update(self,slice,data):
+        self.data[slice] = data
+        self.region_updated = slice,data
 
 
 class ScanningRFMeasurement(tr.HasStrictTraits):
+    _tdc = tr.Instance(TDC,())
+    _pos = tr.Instance(Positioning,kw=dict(
+        _theta_terminal = '/Dev2/ao0',
+        _phi_terminal = '/Dev2/ao1',
+        _focus_terminal = '/Dev2/ao2',
+    ))
+    _cam = tr.Instance(FlyCam)
+
     position_offset = QuantityArrayTrait(pq.um,shape=(2,))
+    position = tr.Property(
+        handler = QuantityArrayTrait(pq.um,shape=(2,)),
+    )
+    _focus_end = QuantityTrait(5*pq.V)
+    focus = tr.Property(
+        handler = QuantityTrait(pq.V)
+    )
+    background_rate = QuantityTrait(pq.kHz)
+
+    auto_optimisation = tr.Bool
+    optimisation_interval = QuantityArrayTrait(30*pq.s)
+    _last_optim = tr.CFloat()
+    _optim_step = QuantityTrait(0.1*pq.um)
+    _optim_size = tr.Int(6)
+    _last_hbt = tr.CFloat()
+    mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
+    _cur_map = tr.Instance(FluorescenceMap)
+    _cur_idx = tr.Array(int,shape=(2,))
+    new_hbt = tr.Event
 
     # scanner class: needs sampleSize (to calculate the max and min angles for the galvo) and
     #               the distance from the galvo to the lens
 
     # arguments: all units in mm, devicePhi for Xtranslation, devicetheta for Ytranslation
-    def __init__(self, sampleSize=None, beamDiameter=5, lens=Lens(1.3, 1.5), inputDevice="Dev2/ai1",
-                 devicePhi="Dev2/ao1", deviceTheta="Dev2/ao0", configFile="scanner_config.cfg"):
-        # local variables rerpresenting the sate of the scanner
-        self.testData = []
-        self.currentX = 0
-        self.currentY = 0
-        self.currentVoltagePhi = 0
-        self.currentVoltageTheta = 0
-        self.currentPiezoVoltage = 0
-        self.sampleSize = sampleSize
-        self.currentGalvoPhi = 0
-        self.currentGalvoTheta = 0
-        self.lens = lens
-        self.calibrationPhi = 0
-        self.calibrationTheta = 0
-        self.devicePhi = devicePhi
-        self.deviceTheta = deviceTheta
-        self.inputDevice = inputDevice
-        self.autoscale = True
-        self.hbtLoop = False
-        self.baseVoltage = 5
-        self.currentXCoord = 0
-        self.currentYCoord = 0
-        self.sigToBack = 0.5
-        self.doNormalization = False
-        self.autocorrection = False
-        self.quadSize = 3
-        self.noCheckForMax = True
-        self.startPoint = None
-        self.correctionFactor = (0, 0)
+    def __init__(self, **kw):
+        kw.setdefault('focus',0*pq.V)
+        super(ScanningRFMeasurement,self).__init__(**kw)
+        self._pos
+        self._tdc.reset()
 
-    def load_config(self, configFile):
-        import json
-        import os.path
-
-        if os.path.isfile(configFile):
-            self._config = json.loads(open(configFile).read(), object_hook=scannerObjects)
-        else:
-            self._config = {}
-            self._config["settings"] = {}
-        if "settings" in self._config:
-            # foreach import config load the variables (same names get overwritten)
-            if "imports" in self._config:
-                for cfgfile in self._config["imports"]:
-                    self.loadConfig(cfgfile)
-            for key in self._config["settings"]:
-                setattr(self, key, self._config["settings"][key])
-
-        self.initCamera()
-        # if we have a focus point set it
-        # init the piezo to full focal
-        self.setFocus(0)
-        if hasattr(self, "focus"):
-            self.setFocus(self.focus)
-        if (hasattr(self, "imageSettings")):
-            self.setImageProperties(self.imageSettings['gain'], self.imageSettings['shutter'])
-        time.sleep(2)
-
-    # load config file
-    def loadConfig(self, configFile="scanner_config.cfg", focus=None):
-        import json
-        import os.path
-
-        if os.path.isfile(configFile):
-            self._config = json.loads(open(configFile).read(), object_hook=scannerObjects)
-        else:
-            raise (ConfigFileNotFoundException)
-        if "settings" in self._config:
-            for key in self._config["settings"]:
-                setattr(self, key, self._config["settings"][key])
-        if hasattr(self, "focus"):
-            self.setFocus(self.focus)
-        if focus is not None:
-            print("set focus")
-            focus.set(self.focus)
-        self.dataArray = np.ones((len(self.ysteps), len(self.xsteps)), dtype=np.float64)
-
-
-    def findMaximumX(self, oldMax, step=0.0002):
-        # we try to find the new maximum in all three dims
-        # first move in x
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        tmpX = self.currentX
-        max = oldMax
-        self.setX(tmpX + step)
-        TDC_getCoincCounters(tmpBuffer)
-        countsA = numpy.sum(tmpBuffer) / 0.032
-        # try to go a step back
-        self.setX(tmpX - step)
-        TDC_getCoincCounters(tmpBuffer)
-        countsB = numpy.sum(tmpBuffer) / 0.032
-        diff = countsA - countsB
-        print("diff is: ", diff)
-        if abs(diff) > 1.5 * numpy.sqrt(oldMax):
-            # so go half the step size to the right
-            if diff < 0:
-                self.setX(tmpX - step / 2.0)
-            else:
-                self.setX(tmpX + step / 2.0)
-        else:
-            return oldMax
-        time.sleep(0.032)
-        TDC_getCoincCounters(tmpBuffer)
-        counts = numpy.sum(tmpBuffer) / 0.032
-        max = self.findMaximumX(counts, step=step / 2.0)
-        # we did not find any maximum go back to origin
-        tmpB = None
-        tmpBuffer = None
-        return max
-
-    def findMaximumY(self, oldMax, step=0.0002):
-        # we try to find the new maximum in all three dims
-        # first move in x
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        tmpY = self.currentY
-        max = oldMax
-        self.setY(tmpY + step)
-        TDC_getCoincCounters(tmpBuffer)
-        countsA = numpy.sum(tmpBuffer) / 0.032
-        # try to go a step back
-        self.setY(tmpY - step)
-        TDC_getCoincCounters(tmpBuffer)
-        countsB = numpy.sum(tmpBuffer) / 0.032
-        diff = countsA - countsB
-        if abs(diff) > 1.5 * numpy.sqrt(oldMax):
-            # so go half the step size to the right
-            if diff < 0:
-                self.setY(tmpY - step / 2.0)
-            else:
-                self.setY(tmpY + step / 2.0)
-        else:
-            return oldMax
-        time.sleep(0.032)
-        TDC_getCoincCounters(tmpBuffer)
-        counts = numpy.sum(tmpBuffer) / 0.032
-        max = self.findMaximumY(counts, step=step / 2.0)
-        # we did not find any maximum go back to origin
-        tmpB = None
-        tmpBuffer = None
-        return max
-        # we did not find any maximum go back to origin
-
-        self.setY(tmpY)
-        print("max and oldmax are the same", oldMax, max)
-        tmpB = None
-        tmpBuffer = None
-        return oldMax
-
-    def findMax(self):
-        # lets start finding the maximum
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        TDC_getCoincCounters(tmpBuffer)
-        counts = numpy.sum(tmpBuffer)
-        newmax = self.findMaximumX(counts)
-        newmax = self.findMaximumY(newmax)
-        tmpB = None
-        tmpBuffer = None
-
-
-    def stopScan(self):
-        self.interrupt = True
-
-
-
-
-    def ReleaseObjects(self):
-        self.analog_output.StopTask()
-        self.analog_output.ClearTask()
-        self.analog_input.StopTask()
-        self.analog_input.ClearTask()
-        self.uninitCamera()
-        TDC_deInit()
-
-    # units are mm: set x and y according to angle and sampledistance x and y is relative to the sample, so it is the
-    # where the laser beam will hit the target
-    # -the incident angle on the lens will be phi as well
-    # -the formula for s(alpha_i) = (beamDiameter/2.) *
-    def setX(self, X, incremental=False):
-        # check if we are on the sample
-        if X < self.minX or X > self.maxX:
-            # raise(AngleOutsideOfRangeException)
-            pass
-        # set the angle of  the galvo
-        if incremental:
-            self.setX(self.currentX + X)
-        else:
-            self.__setPhiRad(numpy.arctan(X * self.lens.LensNumber()))
-            # set the state of the situation
-            self.currentX = X
-
-    def setY(self, Y, incremental=False):
-        # check if we are on the sample
-        if Y < self.minY or Y > self.maxY:
-            # raise(AngleOutsideOfRangeException)
-            pass
-        # set the angle of  the galvo
-        if incremental:
-            self.setY(self.currentY + Y)
-        else:
-            self.__setThetaRad(numpy.arctan(Y * self.lens.LensNumber()))
-            # set the state of the situation
-            self.currentY = Y
-
-    def setPoint(self, x, y, directly=False):
-        self.setX(x if not directly else x + self.correctionFactor[0])
-        self.setY(y if not directly else y + self.correctionFactor[1])
-        if self.correctionFactor is not None:
-            print("Correction factor: x -> %f, y -> %f" % (self.correctionFactor[0], self.correctionFactor[1]))
-
-    def saveState(self, name="tmpArray"):
-        numpy.save(name, self.dataArray)
-        numpy.savetxt(name + ".csv", self.dataArray, delimiter=',')
-        if self.histoData is not None:
-            numpy.save(name + "_histo_", self.histoData)
-            numpy.savetxt(name + "_histo_" + ".csv", self.histoData)
-
-    def goTo(self, x, y, directly=False):
-        self.currentXCoord = x
-        self.currentYCoord = y
-        self.setPoint(self.xsteps[int(x)], self.ysteps[int(y)], directly)
-
-    def getGoToX(self, x):
-        return self.xsteps[int(x)]
-
-    def getGoToY(self, y):
-        return self.ysteps[int(y)]
-
-    def showHistogram(self):
-        plt.clf()
-        plt.scatter(self.dataArray)
-        plt.hist2d(self.dataArray)
-
-    def processMouseClick(self, event):
-        print("Mouse clicked at, ", event.xdata, event.ydata)
-        if self.interrupt and event.xdata is not None and event.ydata is not None:
-            print(self.currentX)
-            self.goTo(int(event.xdata) if event.xdata > 0 else 0, int(event.ydata) if event.ydata > 0 else 0)
-            print(self.noCheckForMax)
-            ax = event.inaxes
-            canvas = event.canvas
-            xfrom = int(event.xdata) - self.quadSize
-            xto = xfrom + self.quadSize * 2.0
-            yfrom = int(event.ydata) - self.quadSize
-            yto = yfrom + self.quadSize * 2.0
-            if hasattr(self, "up"):
-                self.up.pop(0).remove()
-                del self.up
-            if hasattr(self, "down"):
-                self.down.pop(0).remove()
-                del self.down
-            self.up = ax.plot((xfrom, xto), ((yfrom + yto) / 2., (yfrom + yto) / 2.), "w-")
-            self.down = ax.plot(((xfrom + xto) / 2., (xfrom + xto) / 2.), (yfrom, yto), "w-")
-            ax.set_xlim([0, len(self.xsteps) - 1])
-            ax.set_ylim([len(self.ysteps) - 1, 0])
-            canvas.draw()
-            # don't do it!
-            if self.noCheckForMax and False:
-                xfrom = max(int(event.xdata) - self.quadSize, 0)
-                xto = min(xfrom + self.quadSize * 2, len(self.xsteps))
-                yfrom = max(int(event.ydata) - self.quadSize, 0)
-                yto = min(yfrom + self.quadSize * 2, len(self.ysteps))
-                subarray = self.dataArray[yfrom:yto, xfrom:xto]
-                print(subarray, xfrom, xto, yfrom, yto)
-                m = numpy.argmax(subarray)
-                y, x = numpy.unravel_index(m, subarray.shape)
-                print(m, x, y)
-                # calculate real index
-                # TODO check consistency of x and y throughout class
-                x = xfrom + x
-                y = yfrom + y
-                print("(%f,%f) -> (%d,%d)" % (self.currentX, self.currentY, x, y))
-                self.goTo(y, x)
-
-    def plotCurrentRate(self, master=None, refToMain=None):
-        if master is not None:
-            try:
-                import tkinter as Tk
-            except ImportError:
-                import Tkinter as Tk
-            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        from matplotlib.figure import Figure
-
-        f = Figure(figsize=(3, 1.5), dpi=100)
-        f.subplots_adjust(left=0.2)
-        fplt = f.add_subplot(111)
-        for item in (
-                [fplt.title, fplt.xaxis.label, fplt.yaxis.label] + fplt.get_xticklabels() + fplt.get_yticklabels()):
-            item.set_fontsize(8)
-        try:
-            import Tkinter as tk
-        except ImportError:
-            import tkinter as tk
-        if refToMain is not None:
-            toolbar_frame = refToMain.createFrame(master)
-        else:
-            toolbar_frame = tk.Frame(master)
-        toolbar_frame.grid(row=4, column=4, columnspan=3, rowspan=3)
-        if refToMain is not None:
-            ratePlot = refToMain.createCanvas(f, toolbar_frame)
-        else:
-            ratePlot = FigureCanvasTkAgg(f, master=toolbar_frame)
-        ratePlot.show()
-        ratePlotWidget = ratePlot.get_tk_widget()
-        # register mouse callback to be able to navigate to
-        # f.canvas.mpl_connect('pick_event', self.processMouseClick)
-        ratePlotWidget.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-        # add the toolbar
-        currentRate = []
-        t = []
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        ratep = fplt.plot(t, currentRate)
-        fplt.set_xlim([0, 100])
-        i = 0
-        filled = False
-
-        while True:
-            ret = TDC_getCoincCounters(tmpBuffer)
-            if len(currentRate) > 100:
-                currentRate = currentRate[1:]
-                filled = True
-            dataSet = numpy.array(tmpBuffer)
-            currentRate += [numpy.sum(dataSet / (self.exposureTime / 1000))]
-            if not filled:
-                t += [i]
-                i += 1
-            ratep[0].set_data(t, currentRate)
-            if not self.autoscale:
-                fplt.set_ylim([0, 200000])
-            else:
-                fplt.set_ylim([0, numpy.max(currentRate)])
-
-            f.canvas.draw()
-            time.sleep(self.exposureTime / 1000)
-        # ratep[0].set_clim(numpy.min(currentRate), numpy.max(currentRate))
-
-    def showHBT(self, binWidth=1, binCount=20, master=None, refToMain=None):
-        self.hbtRunning = True
-        self.hbtLoop = True
-        # its irritating, binwidth is actually the TDC_timeBase Resolution, that means binWidth corresponds to the time in ns
-        if master is not None:
-            # import according to python version (2 or 3)
-            try:
-                import tkinter as Tk
-            except ImportError:
-                import Tkinter as Tk
-            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-            TDC_enableHbt(True)
-            # we need to set binWidth according to TDC_timeBase
-            timeBase = TDC_getTimebase()
-            # time base is the resolution in seconds, so
-            rightBinWidth = int((binWidth * 1.0e-9) / timeBase)
-            # first set histogram parameter
-            print(timeBase, rightBinWidth, binCount)
-            TDC_setHbtParams(rightBinWidth, binCount)
-            # set up array with at least binCount elements
-
-            from matplotlib.figure import Figure
-
-            histFig = Figure(figsize=(9, 3), dpi=100)
-            histFig.subplots_adjust(left=0.2)
-            histAx = histFig.add_subplot(111)
-            for item in ([histAx.title, histAx.xaxis.label,
-                          histAx.yaxis.label] + histAx.get_xticklabels() + histAx.get_yticklabels()):
-                item.set_fontsize(8)
-            dataArray = numpy.zeros((binCount * 2 - 1,))
-            t = numpy.linspace(-(binCount), binCount - 1, 2 * binCount - 1)
-            if master is None:
-                plt.clf()
-                plt.ion()
-                print("I WANT DATA", len(t), len(dataArray))
-                self.histo = histAx.bar(t, dataArray)  # , norm=LogNorm(vmin=100, vmax=1000000))
-            else:
-                print("I WANT DATA", len(t), len(dataArray))
-                # if the canvas exists just set the data
-                self.histo = histAx.bar(t, dataArray)  # , norm=LogNorm(vmin=100, vmax=1000000))
-            # self.imgplot.set_data(self.dataArray)
-
-        if master is not None and not hasattr(self, "histoCanvas"):
-            # if the canvas is not allready shown show it
-            try:
-                import Tkinter as tk
-            except ImportError:
-                import tkinter as tk
-            if refToMain is not None:
-                toolbar_frame = refToMain.createFrame(master)
-            else:
-                toolbar_frame = tk.Frame(master)
-            toolbar_frame.grid(row=7, column=2, columnspan=7, rowspan=3)
-            if refToMain is not None:
-                histoCanvas = refToMain.createCanvas(histFig, toolbar_frame)
-            else:
-                histoCanvas = FigureCanvasTkAgg(histFig, master=toolbar_frame)
-            histoCanvas.show()
-            histoWidget = histoCanvas.get_tk_widget()
-
-            histoWidget.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-
-            # for normalization we need the integration time
-            startTime = time.time()
-            hbtFunction = TDC_createHbtFunction()
-            self.signalCorrection = False
-            while self.hbtLoop:
-                # retrieve histogram
-                print("in loop", self.hbtRunning)
-                if not self.hbtRunning:
-                    # reset the histogram
-                    print("reset TDC_getHbtCorrelations")
-                    TDC_resetHbtCorrelations()
-                    TDC_calcHbtG2(hbtFunction)
-                    startTime = time.time()
-                    # be sure to not have a time diff of 0 seconds... (otherwise we divide by zero)
-                    endTime = time.time() + 1
-                    self.hbtRunning = True
-                    print("clear data")
-                else:
-                    TDC_calcHbtG2(hbtFunction)
-                    endTime = time.time()
-                dataArray = numpy.array(hbtFunction[0][:], dtype=numpy.float64)
-                datalen = len(dataArray)
-                print(hbtFunction[0].indexOffset)
-                histAx.cla()
-                # normalize data (we assume to have a probabilty of one at large taus, so take the midvalue of the last 5 elements on each side)
-                # print(numpy.concatenate((dataArray[:5], dataArray[-5:])))
-                normConst = numpy.mean(numpy.concatenate((dataArray[:5], dataArray[-5:])))
-                if normConst > 0 and self.doNormalization:
-                    dataArray /= normConst
-
-                # TODO make correction not static
-                # we assume a poor signal to background noise of 0.5
-                if self.signalCorrection:
-                    dataArray = (dataArray - (1 - self.sigToBack ** 2)) / self.sigToBack ** 2
-                    b = dataArray < 0
-                    dataArray[b] = 0
-                histAx.set_ylim([0, numpy.max(dataArray)])
-                self.histo = histAx.plot(t, dataArray)
-                histAx.plot((t[0], t[-1]), (1, 1), 'r-')
-                histAx.plot((t[0], t[-1]), (0.5, 0.5), 'r-')
-                histFig.canvas.draw()
-                # only update every second
-                time.sleep(1)
-
-            self.histoData = dataArray
-            dataArray = None
-            # histAx.cla()
-            TDC_releaseHbtFunction(hbtFunction)
-
-    def scanSample(self, master=None, refToMain=None):
-        # at start we clearly have no interrupt
-        self.interrupt = False
-        self.startPoint = None
-        self.correctionFactor = (0, 0)
-        # clear data array
-        # self.dataArray = numpy.ones((len(self.ysteps),len(self.xsteps)), dtype=numpy.float64)
-        try:
-            import tkinter as Tk
-        except ImportError:
-            import Tkinter as Tk
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-        countX = 0
-        countY = 0
-        from matplotlib.figure import Figure
-
-        f = Figure(figsize=(4, 4), dpi=100)
-        f.subplots_adjust(left=0.2)
-        self.fplt = f.add_subplot(111)
-        # f.tight_layout()
-        self.imgplot = self.fplt.imshow(self.dataArray, animated=True)  # , norm=LogNorm(vmin=100, vmax=1000000))
-        self.imgplot.set_interpolation('none')
-        if hasattr(self, "canvas"):
-            self.canvas.get_tk_widget().grid_forget()
-            self.canvas = None
-        # if the canvas is not allready shown show it
-        try:
-            import Tkinter as tk
-        except ImportError:
-            import tkinter as tk
-        if refToMain is not None:
-            toolbar_frame = refToMain.createFrame(master)
-        elif hasattr(self, "refToMain"):
-            toolbar_frame = self.refToMain.createFrame(master)
-        else:
-            toolbar_frame = tk.Frame(master)
-        toolbar_frame.grid(row=4, column=0, columnspan=2, rowspan=6)
-        # if we have a ref to main try to execute the gui generation on the main thread
-        if refToMain is not None:
-            self.canvas = refToMain.createCanvas(f, toolbar_frame)
-        elif hasattr(self, "refToMain"):
-            self.canvas = self.refToMain.createCanvas(f, toolbar_frame)
-        else:
-            self.canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
-        self.canvas.show()
-        canvasWidget = self.canvas.get_tk_widget()
-        # register mouse callback to be able to navigate to
-        f.canvas.mpl_connect('button_press_event', self.processMouseClick)
-        canvasWidget.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
-
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        # TDC_setExposureTime(self.exposureTime)
-        for i in self.ysteps:
-            countX = 0
-            for o in self.xsteps:
-                # navigate to location
-                self.setPoint(o, i)
-                # retrieve count rate from adp
-                ret = TDC_getCoincCounters(tmpBuffer)
-
-                # set the count rate (the value we get is the pure count number, so divide by exposure time)
-                self.dataArray[countY][countX] = numpy.sum(tmpBuffer) / (self.exposureTime / 1000)
-
-                countX += 1
-                # set data and new limits for better color plotting
-                self.imgplot.set_data(self.dataArray)
-                self.imgplot.set_clim(numpy.min(self.dataArray), numpy.max(self.dataArray))
-
-                # update the canvas with the new data
-                f.canvas.draw()
-                time.sleep(self.exposureTime / 1000)
-                if self.interrupt:
-                    # if we have an interrupt stop scanning and clean the resources
-                    # update the master (we only can get interrupts from the gui, so its save to assume that master is not None)
-                    master.update()
-
-                    # make sure the interrupt is set
-                    self.interrupt = True
-                    # clear the buffer, otherwise we get memory leaks and issues which let the python interpreter crash)
-                    tmpBuffer = None
-                    tmpB = None
-
-                    # navigate back to origin
-                    self.setPoint(0, 0)
-
-                    return
-            countY += 1
-        if master is None:
-            # only save the sample scan if we are not from gui (otherwise we see it there...)
-            plt.savefig("sampleScan.jpeg")
-            plt.ioff()
-
-        # same as for the interrupt
-        tmpB = None
-        tmpBuffer = None
-
-    def takePicture(self, name):
-        if not hasattr(self, "_context"):
+        if False:
             self.initCamera()
+            # if we have a focus point set it
+            # init the piezo to full focal
+            self.dataArray = np.ones((len(self.ysteps), len(self.xsteps)), dtype=np.float64)
+            self.setFocus(0)
+            if hasattr(self, "focus"):
+                self.setFocus(self.focus)
+            if (hasattr(self, "imageSettings")):
+                self.setImageProperties(self.imageSettings['gain'], self.imageSettings['shutter'])
+            time.sleep(2)
 
-        fc2StartCapture(self._context)
-        # create the two pictures one for getting input the other to save
-        rawImage = fc2Image()
-        convertedImage = fc2Image()
-        fc2CreateImage(rawImage)
-        fc2CreateImage(convertedImage)
 
-        fc2RetrieveBuffer(self._context, rawImage)
-        self.savePicture(name, rawImage, convertedImage)
+    def _get_position(self):
+        return self._pos.position - self.position_offset
+    def _set_position(self, position):
+        self._pos.position =  position + self.position_offset
+    @tr.on_trait_change('_pos:position,position_offset')
+    def _position_changes(self):
+        self.trait_property_changed('position',self._get_position())
 
-        fc2DestroyImage(rawImage)
-        fc2DestroyImage(convertedImage)
-        fc2StopCapture(self._context)
+    def _get_focus(self):
+        return self._focus_end - self._pos.piezo_voltage
+    def _set_focus(self, focus):
+        self._pos.piezo_voltage =  self._focus_end - focus
+    @tr.on_trait_change('_pos:piezo_voltage,_focus_end')
+    def _focus_changes(self):
+        self.trait_property_changed('focus',self._get_focus())
 
-    def savePicture(self, name, rawImage, convertedImage):
-        fc2ConvertImageTo(FC2_PIXEL_FORMAT_BGR, rawImage, convertedImage)
+    def deinit(self):
+        self._tdc.deinit()
+        self._pos._release_tasks()
+        del self._tdc
+        del self._pos
+        del self._cam
 
-        fc2SaveImage(convertedImage, name.encode('utf-8'), 6)
+    def stop(self):
+        self.mode = 'idle'
 
-    def uninitCamera(self):
-        fc2StopCapture(self._context)
-        fc2DestroyContext(self._context)
+    def _mode_changed(self,old,new):
+        self._tdc.freeze = new != 'hbt'
+        if new == 'optimising':
+            map = FluorescenceMap(
+                shape = (self._optim_size, self._optim_size),
+                step = (self._optim_step, self._optim_step)
+            )
+            map.centre = self.position
+            self._scan_map(map)
 
-    def initCamera(self):
-        error = fc2Error()
-        self._context = fc2Context()
-        self._guid = fc2PGRGuid()
-        self._numCameras = c_uint()
+    @tr.on_trait_change('_tdc:new_data')
+    def _got_new_data(self, rates):
+        from yde.lib.py2to3 import monotonic
+        if self.mode in ['mapping','optimising']:
+            cm = self._cur_map
+            ci = self._cur_idx
+            cm.update(tuple(ci),rates.sum())
+            if ci[0]&1:
+                if ci[1]:
+                    ci[1] -= 1
+                else:
+                    ci[0] += 1
+            else:
+                if ci[1]+1<cm.shape[1]:
+                    ci[1] += 1
+                else:
+                    ci[0] += 1
+            if ci[0]>=cm.shape[0]:
+                self._cur_map = None
+                if self.mode=='optimising':
+                    self._process_optimisation(cm)
+                self.mode=dict(
+                    mapping='idle',
+                    optimising='hbt' if self._tdc.enable_HBT else 'on_target'
+                )[self.mode]
+            else:
+                tci = tuple(ci)
+                self.position = cm.X[tci], cm.Y[tci]
+        elif self.mode in ['on_target', 'hbt']:
+            now = monotonic()
+            if self.mode == 'hbt':
+                if self._last_hbt + 1 <= now:
+                    self.new_hbt = self._tdc.hbt
+                    self._last_hbt = now
+            if self.auto_optimisation and self._last_optim + self.optimisation_interval.mag_in(pq.s) <= now:
+                self.mode = 'optimising'
 
-        error = fc2CreateContext(self._context)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2CreateContext: " + str(error))
+    def _process_optimisation(self, map):
+        from yde.lib.py2to3 import monotonic
 
-        error = fc2GetNumOfCameras(self._context, self._numCameras)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2GetNumOfCameras: " + str(error))
-        if self._numCameras == 0:
-            print("No Cameras detected")
+        min,max = map.data.min(), map.data.max()
+        isum = 1/map.data.sum()
+        x = (map.X * map.data).sum()*isum
+        y = (map.Y * map.data).sum()*isum
+        drift = pq.asanyarray([x,y]) - map.centre
+        print('optimisation: ',min,max,drift)
+        self.position_offset += drift
+        self.position = map.centre
+        self._last_optim = monotonic()
 
-        # get the first camera
-        error = fc2GetCameraFromIndex(self._context, 0, self._guid)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2GetCameraFromIndex: " + str(error))
+    def _scan_map(self,map):
+        self._cur_idx = 0,0
+        self._cur_map = map
+        self.position = map.X[0,0], map.Y[0,0]
 
-        error = fc2Connect(self._context, self._guid)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2Connect: " + str(error))
+    def choose_point(self, point):
+        self.position = point
+        self.mode = 'optimising'
 
-    def checkForMax(self, textBoxReference):
-        if not hasattr(self, "interrupt") or not self.interrupt or not hasattr(self,
-                                                                               "noCheckForMax") or not self.noCheckForMax:
-            print("scan has not lunched yet, or is running")
-            self.startPoint = None
-            self.correctionFactor = (0, 0)
-            return
-        TDC_freezeBuffers(True)
-        # the scan is not running, so check if we are on the maximum in a 6x6 px array
-        # assume that currentXCoord and currentYCoord are set to the right spot
-        xfrom = max(self.currentXCoord - self.quadSize, 0)
-        xto = min(self.currentXCoord + self.quadSize, len(self.xsteps))
-        yfrom = max(self.currentYCoord - self.quadSize, 0)
-        yto = min(self.currentYCoord + self.quadSize, len(self.ysteps))
-        tmpData = numpy.ones((self.quadSize * 2, self.quadSize * 2), dtype=numpy.float64)
-        tmpB = c_int * 19
-        tmpBuffer = tmpB()
-        sleepTime = 0.01
-        tmpIntens = 0.0
-        tmpLocX = 0.0
-        tmpLocY = 0.0
-        xStart = self.currentX
-        yStart = self.currentY
-        for x in numpy.linspace(0, xto - xfrom - 1, xto - xfrom):
-            for y in numpy.linspace(0, yto - yfrom - 1, yto - yfrom):
-                # get count rate
-                self.goTo(x + xfrom, y + yfrom, directly=True)
-                ret = TDC_getCoincCounters(tmpBuffer)
-                # set the count rate (the value we get is the pure count number, so divide by exposure time)
-                tmpData[y][x] = numpy.sum(tmpBuffer) / (self.exposureTime / 1000)
-                tmpLocX += tmpData[y][x] * self.getGoToX(x + xfrom)
-                tmpLocY += tmpData[y][x] * self.getGoToY(y + yfrom)
-                time.sleep(self.exposureTime / 1000)
-            # same as for the interrupt
-
-        subarray = tmpData
-        tmpIntens = numpy.sum(tmpData)
-        tmpLocX = tmpLocX / tmpIntens
-        tmpLocY = tmpLocY / tmpIntens
-        print(subarray, xfrom, xto, yfrom, yto)
-        m = numpy.argmax(subarray)
-        maximum = numpy.max(subarray)
-        minimum = numpy.min(subarray)
-        if self.autocorrection:
-            self.sigToBack = (maximum - minimum) / maximum
-            textBoxReference.set(self.sigToBack)
-        y, x = numpy.unravel_index(m, subarray.shape)
-        # print(m, x, y)
-        # calculate real index
-        # TODO check consistency of x and y throughout class
-        x = xfrom + x
-        y = yfrom + y
-        print("(%f,%f) -> (%f,%f)" % (xStart, yStart, tmpLocX, tmpLocY))
-
-        self.currentXCoord = x
-        self.currentYCoord = y
-        self.setPoint(tmpLocX, tmpLocY, directly=True)
-        if self.startPoint is not None:
-            self.correctionFactor = (tmpLocX - self.startPoint[0], tmpLocY - self.startPoint[1])
-        else:
-            self.startPoint = (tmpLocX, tmpLocY)
-        # clean up
-        tmpB = None
-        tmpBuffer = None
-        TDC_freezeBuffers(False)
+    def setup_hbt(self, reso, range):
+        self._tdc.enable_HBT = True
+        self._tdc.setup_hbt(reso,range)
+        self.mode = 'hbt'
