@@ -140,9 +140,13 @@ class ScanGui(tr.HasTraits):
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
         s.focusVar = Tk.StringVar()
+        s.focusVar.bind(
+            "<<update>>",
+            lambda: s.focusVar.set(str(self.focus.mag_in(pq.V))),
+        )
         self.on_trait_change(
-            lambda focus: s.focusVar.set(str(self.focus.mag_in(pq.V))),
-            'focus'
+            'focus',
+            lambda: s.focusVar.event_generate('<<update>>', when='tail')
         )
         self.trait_property_changed('focus',self.focus)
         s.focusEntry = Tk.Entry(frame, textvariable=s.focusVar)
@@ -381,6 +385,8 @@ class ScanGui(tr.HasTraits):
         self._rate_ax = ax
         self._rate_canvas = canvas
 
+        frame.bind('<<rate_trace>>',self._update_rate_trace)
+
 
     def _create_HBT_plot(self, frame):
         from matplotlib.figure import Figure
@@ -424,20 +430,28 @@ class ScanGui(tr.HasTraits):
 
     @tr.on_trait_change('_s:_tdc:new_data')
     def _new_rate_value(self,rates):
+        print('new rate data')
         rate = rates.sum()
         trace = self.rate_trace
         trace[:-1] = trace[1:]
         trace[-1] = rate
+        print('update trace data')
         self.rate_trace = trace
+        print('update trace data done')
 
-    def _rate_trace_changed(self,new):
-        return
+    def _rate_trace_changed(self):
+        print('rate_trace_Changed')
+        self._frame.event_generate('<<rate_trace>>',when='tail')
+        print('rate_trace_Changed done')
+    def _update_rate_trace(self):
+        print('updating plot on-screen')
+        new = self.rate_trace
         self._rate_plot.set_ydata(new.magnitude)
         if not self.autoscale:
             self._rate_ax.set_ylim([0, 200])
         else:
             self._rate_ax.set_ylim([0, new.magnitude.max()])
-#        self._rate_canvas.draw()
+        self._rate_canvas.draw()
 
     def reset_hbt(self, reso, range):
         self._s.setup_hbt(reso,range)

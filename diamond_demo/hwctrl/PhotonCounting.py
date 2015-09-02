@@ -64,21 +64,15 @@ class TDC(RepeatingTaskRunner):
     @tr.cached_property
     def _get__timebase(self):
         with self._guard:
-            return qutau.TDC_getTimebase()*pq.s
+            return qutau.getTimebase()*pq.s
 
     def one_pass(self, dt):
         from yde.lib.py2to3 import monotonic
-        buf = np.empty(19,'i4')
-        nupd = ctypes.c_int32()
         now = monotonic()
         with self._guard:
             print('get coinc')
-            qutau.TDC_getCoincCounters(
-                buf.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
-                ctypes.byref(nupd)
-            )
+            buf, nupd = qutau.getCoincCounters()
             print('get coinc done')
-        nupd = nupd.value
         lr = self._last_read
         if nupd:
             self._last_read = now
@@ -96,25 +90,25 @@ class TDC(RepeatingTaskRunner):
 
     def _exposure_time_changed(self,value):
         with self._guard:
-            qutau.TDC_setExposureTime(value.mag_in(pq.ms))
+            qutau.setExposureTime(value.mag_in(pq.ms))
     
     def _enable_HBT_changed(self,value):
         with self._guard:
-            qutau.TDC_enableHbt(value)
+            qutau.enableHbt(value)
 
     def _freeze_changed(self,value):
         with self._guard:
-            qutau.TDC_freezeBuffers(value)
+            qutau.freezeBuffers(value)
 
     def startup(self):
         with self._guard:
             # accept any device
-            qutau.TDC_init(-1)
+            qutau.init(-1)
             # enable all channels
-            qutau.TDC_enableChannels(int(np.sum(1<<self._channels)))
+            qutau.enableChannels(int(np.sum(1<<self._channels)))
             # enable start stop
-            qutau.TDC_enableStartStop(True)
-            qutau.TDC_clearAllHistograms()
+            qutau.enableStartStop(True)
+            qutau.clearAllHistograms()
         # enable hbt
         self._enable_HBT_changed(self.enable_HBT)
         # exposure time in ms
@@ -124,9 +118,9 @@ class TDC(RepeatingTaskRunner):
         with self._guard:
             print('shutdown')
             if self._hbt_fun is not None:
-                qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
+                qutau.releaseHbtFunction(ctypes.byref(self._hbt_fun))
                 self._hbt_fun = None
-            qutau.TDC_deInit()
+            qutau.deInit()
             print('shutdown done')
     
     def failed(self):
@@ -143,14 +137,14 @@ class TDC(RepeatingTaskRunner):
         reso = prescale*self._timebase
         count = int(np.ceil((range/reso).as_num))
         with self._guard:
-            qutau.TDC_setHbtParams(
+            qutau.setHbtParams(
                 prescale,
                 count
             )
             if self._hbt_fun is not None:
-                qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
-            self._hbt_fun = qutau.TDC_createHbtFunction()[0]
-            qutau.TDC_resetHbtCorrelations()
+                qutau.releaseHbtFunction(ctypes.byref(self._hbt_fun))
+            self._hbt_fun = qutau.createHbtFunction()[0]
+            qutau.resetHbtCorrelations()
 
     @property
     def hbt(self):
@@ -161,16 +155,16 @@ class TDC(RepeatingTaskRunner):
         last_count = ctypes.c_int64()
         last_rate = ctypes.c_double()
         with self._guard:
-            qutau.TDC_freezeBuffers(True)
-            qutau.TDC_calcHbtG2(ctypes.byref(fun))
-            qutau.TDC_getHbtEventCount(
+            qutau.freezeBuffers(True)
+            qutau.calcHbtG2(ctypes.byref(fun))
+            qutau.getHbtEventCount(
                 ctypes.byref(total_count),
                 ctypes.byref(last_count),
                 ctypes.byref(last_rate)  # Hz
             )
-            qutau.TDC_getHbtIntegrationTime(ctypes.byref(time))
+            qutau.getHbtIntegrationTime(ctypes.byref(time))
             time = time.value
-            qutau.TDC_freezeBuffers(self.freeze)
+            qutau.freezeBuffers(self.freeze)
         return HBTResult(
             bin_size = dt,
             start_delay = -fun.indexOffset*dt,
