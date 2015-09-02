@@ -94,8 +94,6 @@ class ScanGui(tr.HasTraits):
 
     @staticmethod
     def _config_hook(dct):
-        if "_sample_size_" in dct:
-            return Size(dct["height"], dct["width"])
         if "_eval_" in dct:
             ctxt = dict()
             if "libraries" in dct:
@@ -117,14 +115,16 @@ class ScanGui(tr.HasTraits):
             setattr(self, key, value)
         return cfg
 
-    def __init__(self, master, **kw):
+    def __init__(self, master, config_file=None, **kw):
         scanner_kw = dict()
-        for k in 'config_file'.split():
+        for k in ''.split():
             v = kw.pop(k,None)
             if v is not None:
                 scanner_kw[k] = v
         super(ScanGui,self).__init__(**kw)
         self._s = ScanningRFMeasurement(**scanner_kw)
+        if config_file is not None:
+            self.load_config(config_file)
         self._create_frame(master)
 
     def _create_frame(self, master):
