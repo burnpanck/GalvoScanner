@@ -11,10 +11,7 @@ import traits.api as tr
 from yde.lib.quantity_traits import QuantityArrayTrait, QuantityTrait
 from yde.lib.threading import RepeatingTaskRunner
 
-try:
-    from ..hw import qutau
-except Exception:
-    qutau = None
+from ..hw import qutau
 
 class HBTResult(tr.HasStrictTraits):
     start_delay = QuantityTrait(pq.ns)
@@ -43,8 +40,10 @@ class TDC(RepeatingTaskRunner):
     )
     enable_HBT = tr.Bool
     freeze = tr.Bool
-    _channels = tr.Array(int,shape=(2,),value=np.r_[5,6])
+    _channels = tr.Array(int,shape=(2,),value=np.r_[4,5])
     background_rates = QuantityArrayTrait(pq.kHz,shape=(None,))
+    
+    _guard = tr.Instance(threading.Condition,())
 
     new_data = tr.Event
 
@@ -64,69 +63,94 @@ class TDC(RepeatingTaskRunner):
 
     @tr.cached_property
     def _get__timebase(self):
-        return qutau.TDC_getTimebase()*pq.s
+        with self._guard:
+            return qutau.TDC_getTimebase()*pq.s
 
     def one_pass(self, dt):
         from yde.lib.py2to3 import monotonic
         buf = np.empty(19,'i4')
         nupd = ctypes.c_int32()
         now = monotonic()
-        qutau.TDC_getCoincCounters(buf.ctypes,ctypes.byref(nupd))
+        with self._guard:
+            print('get coinc')
+            qutau.TDC_getCoincCounters(
+                buf.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+                ctypes.byref(nupd)
+            )
+            print('get coinc done')
+        nupd = nupd.value
+        lr = self._last_read
         if nupd:
             self._last_read = now
             if nupd>1:
                 self.logger.warn('Missed counter updates! (nupd=%d)',nupd)
-            print(buf[:8])
-            self.new_data = buf[self._channels]
-
+            print('notify counts')
+            self.new_data = buf[self._channels]/self.exposure_time
+            print('done notify counts')
+            
         self.require_update_by(max(
             now + self._min_wait,
             self._last_read + self.exposure_time.mag_in(pq.s)*0.9
         ))
+        print('photon counts ',buf[self._channels],nupd,dt,now-lr,now-self._last_read,self._next_pass-now)
 
     def _exposure_time_changed(self,value):
-        qutau.TDC_setExposureTime(value.mag_in(pq.ms))
-
+        with self._guard:
+            qutau.TDC_setExposureTime(value.mag_in(pq.ms))
+    
     def _enable_HBT_changed(self,value):
-        qutau.TDC_enableHbt(value)
+        with self._guard:
+            qutau.TDC_enableHbt(value)
 
     def _freeze_changed(self,value):
-        qutau.TDC_freezeBuffers(value)
+        with self._guard:
+            qutau.TDC_freezeBuffers(value)
 
-    def reset(self):
-        # accept any device
-        qutau.TDC_init(-1)
-        # enable all channels
-        qutau.TDC_enableChannels(int(np.sum(1<<self._channels)))
+    def startup(self):
+        with self._guard:
+            # accept any device
+            qutau.TDC_init(-1)
+            # enable all channels
+            qutau.TDC_enableChannels(int(np.sum(1<<self._channels)))
+            # enable start stop
+            qutau.TDC_enableStartStop(True)
+            qutau.TDC_clearAllHistograms()
         # enable hbt
         self._enable_HBT_changed(self.enable_HBT)
-        # enable start stop
-        qutau.TDC_enableStartStop(True)
         # exposure time in ms
         self._exposure_time_changed(self.exposure_time)
-        qutau.TDC_clearAllHistograms()
-
+    
+    def shutdown(self):
+        with self._guard:
+            print('shutdown')
+            if self._hbt_fun is not None:
+                qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
+                self._hbt_fun = None
+            qutau.TDC_deInit()
+            print('shutdown done')
+    
+    def failed(self):
+        self.shutdown()
+    
+    def reset(self):
         self.start()
 
     def deinit(self):
         self.stop()
-        if self._hbt_fun is not None:
-            qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
-            self._hbt_fun = None
-        qutau.TDC_deInit()
 
     def setup_hbt(self, range, reso=1*pq.ns ):
         prescale = int(round((reso/self._timebase).as_num))
         reso = prescale*self._timebase
         count = int(np.ceil((range/reso).as_num))
-        qutau.TDC_setHbtParams(
-            prescale,
-            count
-        )
-        if self._hbt_fun is not None:
-            qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
-        self._hbt_fun = qutau.TDC_createHbtFunction()[0]
-        qutau.TDC_resetHbtCorrelations()
+        with self._guard:
+            qutau.TDC_setHbtParams(
+                prescale,
+                count
+            )
+            if self._hbt_fun is not None:
+                qutau.TDC_releaseHbtFunction(ctypes.byref(self._hbt_fun))
+            self._hbt_fun = qutau.TDC_createHbtFunction()[0]
+            qutau.TDC_resetHbtCorrelations()
 
     @property
     def hbt(self):
@@ -136,15 +160,17 @@ class TDC(RepeatingTaskRunner):
         total_count = ctypes.c_int64()
         last_count = ctypes.c_int64()
         last_rate = ctypes.c_double()
-        qutau.TDC_freezeBuffers(True)
-        qutau.TDC_calcHbtG2(ctypes.byref(fun))
-        qutau.TDC_getHbtEventCount(
-            ctypes.byref(total_count),
-            ctypes.byref(last_count),
-            ctypes.byref(last_rate)  # Hz
-        )
-        qutau.TDC_getHbtIntegrationTime(ctypes.byref(time))
-        qutau.TDC_freezeBuffers(self.freeze)
+        with self._guard:
+            qutau.TDC_freezeBuffers(True)
+            qutau.TDC_calcHbtG2(ctypes.byref(fun))
+            qutau.TDC_getHbtEventCount(
+                ctypes.byref(total_count),
+                ctypes.byref(last_count),
+                ctypes.byref(last_rate)  # Hz
+            )
+            qutau.TDC_getHbtIntegrationTime(ctypes.byref(time))
+            time = time.value
+            qutau.TDC_freezeBuffers(self.freeze)
         return HBTResult(
             bin_size = dt,
             start_delay = -fun.indexOffset*dt,

@@ -99,19 +99,21 @@ class FluorescenceMap(tr.HasStrictTraits):
 class ScanningRFMeasurement(tr.HasStrictTraits):
     _tdc = tr.Instance(TDC,())
     _pos = tr.Instance(Positioning,kw=dict(
-        _theta_terminal = '/Dev2/ao0',
-        _phi_terminal = '/Dev2/ao1',
-        _focus_terminal = '/Dev2/ao2',
+        _theta_terminal = '/Dev1/ao0',
+        _phi_terminal = '/Dev1/ao1',
+        _focus_terminal = '/Dev1/ao2',
     ))
     _cam = tr.Instance(FlyCam)
 
     position_offset = QuantityArrayTrait(pq.um,shape=(2,))
     position = tr.Property(
         handler = QuantityArrayTrait(pq.um,shape=(2,)),
+        depends_on = '_pos:position,position_offset',
     )
     _focus_end = QuantityTrait(5*pq.V)
     focus = tr.Property(
-        handler = QuantityTrait(pq.V)
+        handler = QuantityTrait(pq.V),
+        depends_on = '_pos:piezo_voltage,_focus_end',
     )
     background_rate = QuantityTrait(pq.kHz)
 
@@ -153,17 +155,11 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
         return self._pos.position - self.position_offset
     def _set_position(self, position):
         self._pos.position =  position + self.position_offset
-    @tr.on_trait_change('_pos:position,position_offset')
-    def _position_changes(self):
-        self.trait_property_changed('position',self._get_position())
 
     def _get_focus(self):
         return self._focus_end - self._pos.piezo_voltage
     def _set_focus(self, focus):
         self._pos.piezo_voltage =  self._focus_end - focus
-    @tr.on_trait_change('_pos:piezo_voltage,_focus_end')
-    def _focus_changes(self):
-        self.trait_property_changed('focus',self._get_focus())
 
     def deinit(self):
         self._tdc.deinit()
