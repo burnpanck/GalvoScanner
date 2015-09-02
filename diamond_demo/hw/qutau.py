@@ -195,7 +195,7 @@ tdcbase.TDC_getCoincCounters.restype = c_int
 
 
 def TDC_getCoincCounters(data, updates=None):
-    return tdcbase.TDC_getCoincCounters(data, (updates) if updates is not None else None)
+    return tdcbase.TDC_getCoincCounters(data, updates)
 
 
 tdcbase.TDC_getLastTimestamps.argtypes = [c_bool, POINTER(c_long), POINTER(c_short), POINTER(c_int)]
@@ -440,7 +440,7 @@ def TDC_generateHbtDemo(fctType, params, noiseLv):
     return tdcbase.TDC_generateHbtDemo(fctType, params, noiseLv)
 
 # returns a TDC_HbtFunction
-tdcbase.TDC_createHbtFunction.restype = ct.POINTER(TDC_HbtFunction)
+tdcbase.TDC_createHbtFunction.restype = POINTER(TDC_HbtFunction)
 
 
 def TDC_createHbtFunction():

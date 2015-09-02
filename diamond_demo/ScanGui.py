@@ -370,7 +370,7 @@ class ScanGui(tr.HasTraits):
 
 
         toolbar_frame = Tk.Frame(frame)
-        toolbar_frame.grid(row=4, column=4, columnspan=3, rowspan=6)
+        toolbar_frame.grid(row=4, column=4, columnspan=3, rowspan=3)
 
         canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
         canvas.show()
@@ -381,6 +381,47 @@ class ScanGui(tr.HasTraits):
         self._rate_ax = ax
         self._rate_canvas = canvas
 
+
+    def _create_HBT_plot(self, frame):
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        f = Figure(figsize=(9, 3), dpi=100)
+        f.subplots_adjust(left=0.2)
+        ax = f.add_subplot(111)
+
+        ax.axhline(1,color='r')
+        ax.axhline(0.5,color='r')
+        line, = ax.plot([0],[0])
+
+        for item in (
+                [ax.title, ax.xaxis.label, ax.yaxis.label]
+                + ax.get_xticklabels() + ax.get_yticklabels()
+        ):
+            item.set_fontsize(8)
+
+
+        toolbar_frame = Tk.Frame(frame)
+        toolbar_frame.grid(row=7, column=2, columnspan=7, rowspan=3)
+
+        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
+        canvas.show()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+
+        self._HBT_plot = line
+        self._HBT_ax = ax
+        self._HBT_canvas = canvas
+
+    @tr.on_trait_change('_s:new_hbt')
+    def _HBT_updated(self, hbt):
+        self._HBT_plot.set_data(
+            hbt.bin_centres.mag_in(pq.ns),
+            hbt.g2(normalise=self.normalise,correct=self.correct)
+        )
+#        self._HBT_canvas.draw()
+
+
     @tr.on_trait_change('_s:_tdc:new_data')
     def _new_rate_value(self,rates):
         rate = rates.sum()
@@ -390,12 +431,13 @@ class ScanGui(tr.HasTraits):
         self.rate_trace = trace
 
     def _rate_trace_changed(self,new):
+        return
         self._rate_plot.set_ydata(new.magnitude)
         if not self.autoscale:
             self._rate_ax.set_ylim([0, 200])
         else:
             self._rate_ax.set_ylim([0, new.magnitude.max()])
-        self._rate_canvas.draw()
+#        self._rate_canvas.draw()
 
     def reset_hbt(self, reso, range):
         self._s.setup_hbt(reso,range)
@@ -457,47 +499,6 @@ class ScanGui(tr.HasTraits):
         data = self.data.magnitude
         self._map_image.set_data(data)
         self._map_image.set_clim(data.min(),data.max())
-        self._map_canvas.draw()
+#        self._map_canvas.draw()
 
-############################
-
-
-    def _create_HBT_plot(self, frame):
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-        f = Figure(figsize=(9, 3), dpi=100)
-        f.subplots_adjust(left=0.2)
-        ax = f.add_subplot(111)
-
-        ax.axhline(1,color='r')
-        ax.axhline(0.5,color='r')
-        line, = ax.plot([0],[0])
-
-        for item in (
-                [ax.title, ax.xaxis.label, ax.yaxis.label]
-                + ax.get_xticklabels() + ax.get_yticklabels()
-        ):
-            item.set_fontsize(8)
-
-
-        toolbar_frame = Tk.Frame(frame)
-        toolbar_frame.grid(row=7, column=2, columnspan=7, rowspan=3)
-
-        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
-        canvas.show()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
-
-        self._HBT_plot = line
-        self._HBT_ax = ax
-        self._HBT_canvas = canvas
-
-    @tr.on_trait_change('_s:new_hbt')
-    def _HBT_updated(self, hbt):
-        self._HBT_plot.set_data(
-            hbt.bin_centres.mag_in(pq.ns),
-            hbt.g2(normalise=self.normalise,correct=self.correct)
-        )
-        self._HBT_canvas.draw()
 
