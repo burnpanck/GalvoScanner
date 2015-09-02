@@ -291,3 +291,7 @@ class ScanGui:
 	def focusCallback(self):
 		theFocus = float(self.focusVar.get())
 		self.gs.setFocus(theFocus)
+
+
+if __name__ == '__main__':
+	gui = ScanGui()

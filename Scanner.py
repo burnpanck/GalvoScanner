@@ -610,7 +610,7 @@ class Scanner:
 			from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
 		from matplotlib.figure import Figure
 		f = Figure(figsize=(3,1.5), dpi=100)
-		f.subplots_adjust(left=0.2)
+		f.subplots_adjust(left=0.2, bottom=0.1)
 		fplt = f.add_subplot(111)
 		for item in ([fplt.title, fplt.xaxis.label, fplt.yaxis.label] +fplt.get_xticklabels() + fplt.get_yticklabels()):
 			item.set_fontsize(8)
