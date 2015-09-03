@@ -197,7 +197,7 @@ class HbtFunction(ctypes.Structure):
     @property
     def values(self):
         addr = ctypes.cast(self._values, ctypes.POINTER(ctypes.c_double))
-        return np.ctypeslib.as_array(addr, self.capacity)
+        return np.ctypeslib.as_array(addr, (self.capacity,))
 
 # Enum
 FctType = EnumMeta.from_defstr('FctType', """

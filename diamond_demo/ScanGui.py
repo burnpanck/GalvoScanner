@@ -5,6 +5,7 @@ import time
 import traceback
 import importlib
 import os.path
+import abc
 
 # conditional module loading python 2/3
 try:
@@ -18,12 +19,15 @@ import numpy as np
 import quantities as pq
 import traits.api as tr
 
-from .lib import Events
-from .Scanner import ScanningRFMeasurement, FluorescenceMap
+import matplotlib.axes
+import matplotlib.backends.backend_tkagg
+import matplotlib as mpl
 
 from yde.lib.misc.basics import Struct
 from yde.lib.quantity_traits import QuantityArrayTrait
-from yde.lib.traits_ext import declared_trait
+from yde.lib.traits_ext import declared_trait, trait_type
+
+from .Scanner import ScanningRFMeasurement, FluorescenceMap
 
 def catch2messagebox(fun):
     """ wrap function to display a message when an exception happens
@@ -49,22 +53,163 @@ def handle_traits_error(object, trait_name, old_value, new_value):
     )
     raise
 
+class TkFigure(tr.HasTraits):
+    frame = tr.Any
+    ax = tr.Instance(mpl.axes.Axes)
+    canvas = tr.Instance(mpl.backends.backend_tkagg.FigureCanvasTkAgg)
+    update = tr.Callable
+
+    button_press_event = tr.Event
+    
+    def __init__(self, parent, fig=dict(), ax=dict(), *, grid=None, left=0.1, right=0.1, top=0.1, bottom=0.1, **kw):
+        for k in 'figsize dpi'.split():
+            if k in kw:
+                fig[k] = kw.pop(k)
+
+        for k in 'xlabel ylabel'.split():
+            if k in kw:
+                ax[k] = kw.pop(k)
+                
+        f = mpl.figure.Figure(**fig)
+        ax = f.add_axes([left,bottom,1-left-right,1-bottom-top],**ax)
+
+        frame = Tk.Frame(parent)
+        if grid is not None:
+            frame.grid(**grid)
+
+        canvas = mpl.backends.backend_tkagg.FigureCanvasTkAgg(f, master=frame)
+        canvas.show()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+        def connect(e,canvas,obj):
+            canvas.mpl_connect(e, lambda v: setattr(obj,e,v))
+        for e in 'button_press_event'.split():
+            connect(e,canvas,self)
+
+        kw.update(
+            frame = frame,
+            ax = ax,
+            canvas = canvas,
+        )
+         
+        super(TkFigure, self).__init__(**kw)
+
+        frame.bind('<<reqest_update>>',self._do_update)
+        
+    def request_update(self):
+        self.frame.event_generate('<<reqest_update>>',when='tail')
+       
+    def _do_update(self, event):
+        if not self.update:
+            return
+        self.update(self)
+        self.ax.autoscale(None)
+        self.canvas.draw()
+
+class TkVarLink(tr.ABCHasStrictTraits):
+    obj = tr.Instance(tr.HasTraits)
+    trait = tr.Str
+    var = tr.Any
+    ui = tr.Any
+    auto_update = tr.Bool(True)
+    
+    @classmethod
+    def make(cls,parent,obj,trait,*,row=None,column=None,**kw):
+        t = trait_type(obj, trait)
+        if isinstance(t, tr.Bool):
+            cls = TkBoolLk
+        elif isinstance(t, QuantityArrayTrait):
+            cls = TkQuantityLk
+        else:
+            cls = TkFloatLk
+        traits = dict()
+        for k in cls.class_editable_traits():
+            if k in kw:
+                traits[k] = kw.pop(k)
+        ret = cls(obj=obj,trait=trait,**traits)
+        ret._make_ui(parent,**kw)
+        obj.on_trait_change(
+            ret._request_update,
+            ret.trait
+        )
+        ret.ui.bind('<<update_value>>',ret._update_tk)
+        if ret.auto_update and False:
+            ret.var.trace('w', ret._update_trait)
+        ret.ui.grid(row=row,column=column)
+        ret._request_update()
+        return ret
+    
+     
+    def _request_update(self):
+        self.ui.event_generate('<<update_value>>',when='tail')
+     
+    def _update_tk(self, event):
+        new = getattr(self.obj, self.trait)
+        print('update tk ',self.trait,event,new)
+        self.var.set(self._fmt(new))
+    
+    def _update_trait(self, *args, **kw):
+        print('_update traits')
+        new = self._parse(self.var.get())
+        print('update trait ',self.trait,args,kw,new)
+        setattr(self.obj, self.trait, new)
+
+    @abc.abstractmethod
+    def _make_ui(self,parent,**ui): pass
+    
+    @abc.abstractmethod
+    def _fmt(self, val): pass
+    
+    @abc.abstractmethod
+    def _parse(self, val): pass
+
+class TkBoolLk(TkVarLink):
+    var = tr.Instance(Tk.BooleanVar, ())
+   
+    def _make_ui(self,parent,**ui):
+        self.ui = Tk.Checkbutton(parent,variable=self.var,**ui)
+    def _fmt(self, val):
+        return val
+    def _parse(self, val):
+        return val
+            
+class TkFloatLk(TkVarLink):
+    fmt = tr.Str('%.3f')
+    var = tr.Instance(Tk.StringVar, ())
+
+    def _make_ui(self,parent,**ui):
+        self.ui = Tk.Entry(parent,textvariable=self.var,**ui)
+    def _fmt(self, val):
+        return self.fmt%val
+    def _parse(self, val):
+        return float(val)
+        
+class TkQuantityLink(TkFloatLk):
+    unit = tr.Any
+    
+    def _fmt(self, val):
+        return self.fmt%val.mag_in(self.unit) + ' '+ str(self.unit)
+    def _parse(self, val):
+        parts = val.split(None,1)
+        if len(parts)>1:
+            unit = getattr(pq,parts[1:])
+        else:
+            unit = self.unit
+        return float(parts[0]) * unit
+        
 class ScanGui(tr.HasTraits):
     _s = tr.Instance(ScanningRFMeasurement)
     _frame = tr.Instance(Tk.Frame)
     _tk_objects = tr.Dict(tr.Str,tr.Any)
-    _map_image = tr.Any(desc='matplotlib image')
-    _map_canvas = tr.Any(desc='matplotlib tkagg canvas')
-    _rate_plot = tr.Any(desc='matplotlib line')
-    _rate_ax = tr.Any(desc='matplotlib axes')
-    _rate_canvas = tr.Any(desc='matplotlib tkagg canvas')
-    _HBT_plot = tr.Any(desc='matplotlib line')
-    _HBT_ax = tr.Any(desc='matplotlib axes')
-    _HBT_canvas = tr.Any(desc='matplotlib tkagg canvas')
+    _map_fig = tr.Instance(TkFigure)
+    _fb_map_fig = tr.Instance(TkFigure)
+    _rate_fig = tr.Instance(TkFigure)
+    _HBT_fig = tr.Instance(TkFigure)
 
     focus = tr.DelegatesTo('_s')
+    mode = tr.DelegatesTo('_s')
     position = tr.DelegatesTo('_s')
-    background_rate = tr.DelegatesTo('_s')
+    signal_ratio = tr.DelegatesTo('_s')
     auto_optimisation = tr.DelegatesTo('_s')
     autoscale = tr.Bool(True)
     normalise = tr.Bool(True)
@@ -73,8 +218,10 @@ class ScanGui(tr.HasTraits):
         shape = (10,10),
         step = (0.5,0.5)*pq.um,
     ))
+    fb_map = tr.DelegatesTo('_s')
     rate_trace = QuantityArrayTrait(np.zeros(100)*pq.kHz,shape=(None,))
-
+    last_HBT = tr.Any
+    
     @classmethod
     @catch2messagebox
     def main(cls,**kw):
@@ -115,8 +262,8 @@ class ScanGui(tr.HasTraits):
         for cfgfile in cfg.pop("imports",[]):
             cfg.update(self.load_config(os.path.join(path,cfgfile)))
         for key, obj in zip(
-            'gui galvo'.split(),
-            [self, self._s._pos],
+            'gui galvo qupsi scanner'.split(),
+            [self, self._s._pos, self._s._tdc, self._s],
         ):
             self._handle_cfg(obj, cfg.pop(key, {}))
         return cfg
@@ -132,6 +279,8 @@ class ScanGui(tr.HasTraits):
         if config_file is not None:
             self.load_config(config_file)
         self._create_frame(master)
+        self._s._tdc.reset()
+
 
     def _create_frame(self, master):
 
@@ -164,9 +313,12 @@ class ScanGui(tr.HasTraits):
         s.focus.grid(row=0, column=1)
 
         # reconnectQuTau
+        def reconnect():
+            print('reconnect pressed!')
+            self._s._tdc.reset()
         s.rcQuTau = Tk.Button(
             frame, text="Reconnect QuTau",
-            command=cb(lambda:self._s._tdc.reset)
+            command=cb(reconnect)
         )
         s.rcQuTau.grid(row=1, column=1)
         # self.scale = Scale(frame,from_=0, to=5, resolution=0.001, orient=HORIZONTAL, command=self.ValueChanged)
@@ -201,12 +353,6 @@ class ScanGui(tr.HasTraits):
         )
         s.stopScan.grid(row=2, column=1)
 
-        # button for saving the state
-        s.saveState = Tk.Button(frame, text="Save state", command=cb(self.save_state))
-        s.saveState.grid(row=3, column=2)
-        # button for taking a picture with the ccd
-        s.ccdPic = Tk.Button(frame, text="Take Picture", command=cb(self.take_picture))
-        s.ccdPic.grid(row=3, column=3)
         # button for resetting position
         s.resetPos = Tk.Button(
             frame, text="Goto 0/0",
@@ -238,6 +384,16 @@ class ScanGui(tr.HasTraits):
             ]*pq.um))
         )
         s.setPos.grid(row=0, column=7)
+        
+        # position correcture
+        s.poscorrVar = Tk.StringVar()
+        self.on_trait_change(
+            lambda mode: s.poscorrVar.set(mode),
+            '_s.position_offset'
+        )
+        self._s.trait_property_changed('position_offset',self._s.position_offset)
+        s.poscorrLbl = Tk.Label(frame, textvariable=s.poscorrVar)
+        s.poscorrLbl.grid(row=1, column=6)
 
         s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
         s.angleButton.grid(row=1, column=8)
@@ -250,34 +406,37 @@ class ScanGui(tr.HasTraits):
             )),
         )
         s.hbtButton.grid(row=1, column=5)
-        s.hbtStopButton = Tk.Button(frame, text="Clear HBT", command=cb(self.hideHBT))
-        s.hbtStopButton.grid(row=1, column=6)
         s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
         s.hbtUnRunButton.grid(row=1, column=7)
         # checkbox for correction of HBT
         s.correctionVar = Tk.BooleanVar()
+        self.on_trait_change(
+            lambda n: s.correctionVar.set(n),
+            'correct'
+        )        
+        self.trait_property_changed('correct',self.correct)
         s.correctionCheck = Tk.Checkbutton(
-            frame, text="Correction", variable=s.correctionVar,
-            command=cb(lambda:self.enable_correction(
-                s.correctionVar.get(),
-                float(s.bgrateVar.get())*pq.kHz,
-            )),
+            frame, text="correction", variable=s.correctionVar,
+            command=cb(lambda:self.trait_set(correct=s.correctionVar.get())),
         )
         s.correctionCheck.grid(row=3, column=6)
-        s.bgrateVar = Tk.StringVar()
-        s.bgrateEntry = Tk.Entry(frame, textvariable=s.bgrateVar)
-        s.bgrateEntry.grid(row=3, column=7)
-        self.on_trait_change(
-            lambda rate: s.bgrateVar.set(str(rate.mag_in(pq.kHz))),
-            'background_rate'
+        s.bgrateVar = TkVarLink.make(
+            frame,
+            self, 'signal_ratio',
+            row=3,column=7,
+            fmt = '%.3f',
         )
-        self.trait_property_changed('background_rate',self.background_rate)
 
         # autocorrection
         s.autocorrVar = Tk.BooleanVar()
+        self._s.on_trait_change(
+            lambda n: s.autocorrVar.set(n),
+            'auto_correction'
+        )        
+        self._s.trait_property_changed('auto_correction',self._s.auto_correction)
         s.autocorrCheck = Tk.Checkbutton(
             frame, text="autocorrection", variable=s.autocorrVar,
-            command=cb(lambda:self.enable_autocorr(s.autocorrVar.get())),
+            command=cb(lambda:self._s.trait_set(auto_correction=s.autocorrVar.get())),
         )
         s.autocorrCheck.grid(row=2, column=8)
         # checkbox for normalization
@@ -289,7 +448,7 @@ class ScanGui(tr.HasTraits):
         self.trait_property_changed('normalise',self.normalise)
         s.normCheck = Tk.Checkbutton(
             frame, text="Normalization", variable=s.normVar,
-            command=cb(lambda:self._s.trait_set(normalise=s.normVar.get())),
+            command=cb(lambda:self.trait_set(normalise=s.normVar.get())),
         )
         s.normCheck.grid(row=3, column=8)
 
@@ -305,8 +464,17 @@ class ScanGui(tr.HasTraits):
             command=cb(lambda:self._s.trait_set(auto_optimisation=s.autofeedbackVar.get())),
         )
         s.autofeedbackCheck.grid(row=4, column=8)
-        s.autofeedbackCheck.select()
 
+        # scanner mode
+        s.modeVar = Tk.StringVar()
+        self.on_trait_change(
+            lambda mode: s.modeVar.set(mode),
+            'mode'
+        )
+        self.trait_property_changed('mode',self.mode)
+        s.modeLbl = Tk.Label(frame, textvariable=s.modeVar)
+        s.modeLbl.grid(row=4, column=7)
+        
         # entry fields for binWidth and binCount
         s.binWidth = Tk.StringVar()
         s.binCount = Tk.StringVar()
@@ -323,6 +491,7 @@ class ScanGui(tr.HasTraits):
 
         
         self._create_scan_plot(frame)
+        self._create_feedback_plot(frame)
         self._create_rate_plot(frame)
         self._create_HBT_plot(frame)
 
@@ -332,51 +501,70 @@ class ScanGui(tr.HasTraits):
 
 
     def _create_scan_plot(self, frame):
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        from matplotlib.figure import Figure
-
-        f = Figure(figsize=(4, 4), dpi=100)
-        f.subplots_adjust(left=0.2)
-        ax = f.add_subplot(111)
+        f = TkFigure(
+            frame,
+            figsize=(4, 4), dpi=100,
+            xlabel='',ylabel='',
+            left=0.12,bottom=0.07,
+            top = 0.04, right=0.04,
+            grid=dict(row=4,column=0,columnspan=2,rowspan=6),
+            update=self._update_map_image
+        )
         xr,yr = self.map.extents.mag_in(pq.um)
         data = self.map.data.magnitude
-        print('!!!! ',xr,yr,self.map.step,self.map.shape)
-        img = ax.pcolorfast(
+        f.img = f.ax.pcolorfast(
             xr,yr,data,
             animated=True,
-            cmap='CMRmap',
+            cmap='afmhot',
         )
+        nowhere = np.tile(np.nan,5)*pq.um
+        f.curs, = f.ax.plot(
+            nowhere,nowhere,
+#            animated=True,
+            c='b',
+            lw=2,
+            zorder=10,
+        )
+        f.ax.invert_yaxis()
+        f.ax.set_xlim(*xr)
+        f.ax.set_ylim(*yr[::-1])
+        self._map_fig = f
 
-        toolbar_frame = Tk.Frame(frame)
-        toolbar_frame.grid(row=4, column=0, columnspan=2, rowspan=6)
-
-        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
-        canvas.show()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
-        canvas.mpl_connect('button_press_event', self._map_clicked)
-
-        if False:
-            from matplotlib.backends.backend_tkagg import NavigationToolbar2TkAgg
-            return NavigationToolbar2TkAgg(canvas, master)
-
-        self._map_image = img
-        self._map_canvas = canvas
+    def _create_feedback_plot(self, frame):
+        f = TkFigure(
+            frame,
+            figsize=(1.5, 1.5), dpi=100,
+            grid=dict(row=4,column=2,columnspan=2,rowspan=3),
+            update=self._update_fb_map_image
+        )
+        xr,yr = self.fb_map.extents.mag_in(pq.um)
+        data = self.fb_map.data.magnitude
+        f.img = f.ax.pcolorfast(
+            xr,yr,data,
+            animated=True,
+            cmap='afmhot',
+        )
+        f.ax.invert_yaxis()
+        f.ax.xaxis.set_visible(False)
+        f.ax.yaxis.set_visible(False)
+        self._fb_map_fig = f
         
-        frame.bind('<<map_changed>>',self._update_map_image)
-
 
     def _create_rate_plot(self, frame):
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-        f = Figure(figsize=(3, 1.5), dpi=100)
-        f.subplots_adjust(left=0.2)
-        ax = f.add_subplot(111)
-
+        f = TkFigure(
+            frame,
+            figsize=(3, 1.5), dpi=100,
+            xlabel='',ylabel='Counts [kHz]',
+            left=0.2,bottom=0.1,
+            top = 0.1, right=0.04,
+            grid=dict(row=4,column=4,columnspan=3,rowspan=3),
+            update=self._update_rate_trace
+        )        
+        ax = f.ax
         line, = ax.plot(np.tile(np.nan,100))
+        f.trace = line
         ax.set_xlim(0,100)
-
+        ax.xaxis.set_visible(False)
 
         for item in (
                 [ax.title, ax.xaxis.label, ax.yaxis.label]
@@ -384,95 +572,82 @@ class ScanGui(tr.HasTraits):
         ):
             item.set_fontsize(8)
 
-
-        toolbar_frame = Tk.Frame(frame)
-        toolbar_frame.grid(row=4, column=4, columnspan=3, rowspan=3)
-
-        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
-        canvas.show()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
-
-        self._rate_plot = line
-        self._rate_ax = ax
-        self._rate_canvas = canvas
-
-        frame.bind('<<rate_trace>>',self._update_rate_trace)
+        self._rate_fig = f
 
 
     def _create_HBT_plot(self, frame):
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-        f = Figure(figsize=(9, 3), dpi=100)
-        f.subplots_adjust(left=0.2)
-        ax = f.add_subplot(111)
-
+        f = TkFigure(
+            frame,
+            figsize=(9, 3), dpi=100,
+            xlabel='$\tau$ [ns]',ylabel='$g^2$',
+            left=0.08,bottom=0.15,
+            top = 0.04, right=0.03,
+            grid=dict(row=7,column=2,columnspan=7,rowspan=1),
+            update=self._update_HBT_plot
+        )        
+        ax = f.ax
         ax.axhline(1,color='r')
         ax.axhline(0.5,color='r')
         line, = ax.plot([0],[0])
-
+        f.hist = line
+        
         for item in (
                 [ax.title, ax.xaxis.label, ax.yaxis.label]
                 + ax.get_xticklabels() + ax.get_yticklabels()
         ):
             item.set_fontsize(8)
 
-
-        toolbar_frame = Tk.Frame(frame)
-        toolbar_frame.grid(row=7, column=2, columnspan=7, rowspan=3)
-
-        canvas = FigureCanvasTkAgg(f, master=toolbar_frame)
-        canvas.show()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
-
-        self._HBT_plot = line
-        self._HBT_ax = ax
-        self._HBT_canvas = canvas
-
+        self._HBT_fig = f
+       
+        
     @tr.on_trait_change('_s:new_hbt')
     def _HBT_updated(self, hbt):
-        self._HBT_plot.set_data(
-            hbt.bin_centres.mag_in(pq.ns),
-            hbt.g2(normalise=self.normalise,correct=self.correct)
+        self.last_HBT = hbt
+        self._HBT_needs_replot()
+        
+    @tr.on_trait_change('normalise,correct')
+    def _HBT_needs_replot(self):
+        if self._HBT_fig is None:
+            return
+        self._HBT_fig.request_update()
+    
+    def _update_HBT_plot(self, event):
+        hbt = self.last_HBT
+        if hbt is None:
+            return
+        bc = hbt.bin_centres.mag_in(pq.ns)
+        g2 = hbt.g2(normalise=self.normalise,correct=self.correct)
+        self._HBT_fig.hist.set_data(
+            bc,
+            g2
         )
-#        self._HBT_canvas.draw()
+        self._HBT_fig.ax.set_xlim(np.min(bc),np.max(bc))
+        self._HBT_fig.ax.set_ylim(0,np.max(g2))
 
 
     @tr.on_trait_change('_s:_tdc:new_data')
     def _new_rate_value(self,rates):
-        print('new rate data')
         rate = rates.sum()
         trace = self.rate_trace
         trace[:-1] = trace[1:]
         trace[-1] = rate
-        print('update trace data')
         self.rate_trace = trace
-        print('update trace data done')
 
     def _rate_trace_changed(self):
-        if not self._frame:
+        if self._rate_fig is None:
             return
-        print('rate_trace_Changed')
-        self._frame.event_generate('<<rate_trace>>',when='tail')
-        print('rate_trace_Changed done')
+        self._rate_fig.request_update()
+
     def _update_rate_trace(self, event):
-        print('updating plot on-screen')
         new = self.rate_trace
-        self._rate_plot.set_ydata(new.magnitude)
+        self._rate_fig.trace.set_ydata(new.magnitude)
         if not self.autoscale:
-            self._rate_ax.set_ylim([0, 200])
+            self._rate_fig.ax.set_ylim([0, 200])
         else:
-            self._rate_ax.set_ylim([0, new.magnitude.max()])
-        self._rate_canvas.draw()
+            self._rate_fig.ax.set_ylim([0, new.magnitude.max()])
 
     def reset_hbt(self, reso, range):
         self._s.setup_hbt(reso,range)
-
-    def hideHBT(self):
-        raise NotImplementedError
-        self.gs.hbtRunning = False
 
     def stop_hbt(self):
         self._s.mode = 'on_target'
@@ -482,56 +657,67 @@ class ScanGui(tr.HasTraits):
             self._s._pos.galvo_voltage.mag_in(pq.V)
         ))
 
-    def enable_correction(self,enable,background_rate):
-        if enable:
-            self.background_rate = background_rate
-            self.gs.signalCorrection = True
-        else:
-            self.gs.signalCorrection = False
-
-    def enable_autocorr(self,enable):
-        if not enable:
-            self.gs.autocorrection = False
-            self.correctionTextField.config(state="normal")
-        else:
-            self.gs.autocorrection = True
-            self.correctionTextField.config(state="readonly")
-
-    def save_state(self):
-        raise NotImplementedError
-        f = filedialog.asksaveasfilename(filetypes=[("Numpy Binary", "*.npy")])
-        if f:
-            self.gs.saveState(f)
-
-    def take_picture(self):
-        raise NotImplementedError
-        f = filedialog.asksaveasfilename(filetypes=[("PNG", "*.png")], defaultextension=".png")
-        if f:
-            self.gs.takePicture(f)
-
     def open_config(self):
         f = filedialog.askopenfile(initialdir="./configs", filetypes=[("ConfigFile", "*.cfg")])
         if f is not None:
             self.load_config(f.name)
 
-
+    @tr.on_trait_change('_map_fig:button_press_event')
     def _map_clicked(self,event):
-        pos = np.r_[event.xdata, event.ydata] * pq.um
+        if event.xdata is None or event.ydata is None:
+            return
+        pos = (event.xdata, event.ydata) * pq.um
         print("Mouse clicked at ", pos)
         self._s.choose_point(pos)
         # TODO: plot crosshair
 
-    @tr.on_trait_change('map:region_updated')
+    @tr.on_trait_change('map.region_updated')
     def _map_updated(self,event):
-        if not self._frame:
+        if not self._map_fig:
             return
-        slice, update = event
-        self._frame.event_generate('<<map_changed>>',when='tail')
+#        slice, update = event
+        self._map_fig.request_update()
         
-    def _update_map_image(self, event):
+    @tr.on_trait_change('_s:fb_map.centre')
+    def _fb_map_moved(self,event):
+        f = self._map_fig
+        c = f.curs
+        m = self.fb_map
+        if m is None:
+            nowhere = np.tile(np.nan,5)*pq.um
+            c.set_data(
+                nowhere,
+                nowhere
+            )
+        else:
+            (x0,x1),(y0,y1) = m.extents
+            c.set_data(
+                pq.asanyarray([x0,x1,x1,x0,x0]),
+                pq.asanyarray([y0,y0,y1,y1,y0])
+            )
+        self._map_fig.request_update()
+        
+    def _update_map_image(self, fig):
         data = self.map.data.magnitude
-        self._map_image.set_data(data)
-        self._map_image.set_clim(data.min(),data.max())
-        self._map_canvas.draw()
+        x,y = self.map.extents
+        img = fig.img
+        ax = fig.ax
+        img.set_data(data)
+        img.set_clim(data.min(),data.max())
+        ax.set_xlim(*x)
+        ax.set_ylim(*y[::-1])
+        
+    @tr.on_trait_change('_s:fb_map.region_updated')
+    def _fb_map_updated(self,event):
+        if not self._fb_map_fig:
+            return
+#        slice, update = event
+        self._fb_map_fig.request_update()
+        
+    def _update_fb_map_image(self, fig):
+        data = self.fb_map.data.magnitude
+        img = fig.img
+        img.set_data(data)
+        img.set_clim(data.min(),data.max())
 
 

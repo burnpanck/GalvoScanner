@@ -84,5 +84,5 @@ def createHbtFunction():
 tdclib.TDC_releaseHbtFunction.restype = None
 tdclib.TDC_releaseHbtFunction.argtypes = [ctypes.POINTER(HbtFunction)]
 def releaseHbtFunction(fct):
-    _handle_errors(tdclib.TDC_releaseHbtFunction(fct),tdclib.TDC_releaseHbtFunction,"TDC_releaseHbtFunction",(fct))
+    tdclib.TDC_releaseHbtFunction(fct)
         

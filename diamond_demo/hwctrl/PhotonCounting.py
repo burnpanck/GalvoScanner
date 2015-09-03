@@ -15,9 +15,9 @@ from ..hw import qutau
 class HBTResult(tr.HasStrictTraits):
     start_delay = QuantityTrait(pq.ns)
     bin_size = QuantityTrait(pq.ns)
-    bin_centres = tr.Property
+    bin_centres = tr.Property(depends_on='start_delay,bin_size,raw_result')
     integration_time = QuantityTrait(pq.s)
-    background_rates = QuantityArrayTrait(pq.kHz,shape=(2,))
+    signal_ratio = tr.CFloat(desc='ratio signal to (signal+background)')
     raw_result = tr.Array(shape=(None,))
 
     def g2(self,normalise=True,correct=True):
@@ -28,10 +28,15 @@ class HBTResult(tr.HasStrictTraits):
                 ret /= long_time
 
         if correct:
-            fg_ratio = self.sigToBack**2
-            ret = (ret - (1-fg_ratio))/fg_ratio
+            s2 = self.signal_ratio**2
+            s2 = max(s2, 1-ret.min())
+            ret = (ret - (1-s2))/s2
         return ret
 
+    @tr.cached_property
+    def _get_bin_centres(self):
+        return self.start_delay + np.arange(self.raw_result.size)*self.bin_size
+        
 class TDC(RepeatingTaskRunner):
     exposure_time = QuantityTrait(100*pq.ms)
     _timebase = tr.Property(
@@ -40,7 +45,7 @@ class TDC(RepeatingTaskRunner):
     enable_HBT = tr.Bool
     freeze = tr.Bool
     _channels = tr.Array(int,shape=(2,),value=np.r_[4,5])
-    background_rates = QuantityArrayTrait(pq.kHz,shape=(None,))
+    signal_ratio = tr.CFloat(1,desc='ratio signal to (signal+background)')
     
     _guard = tr.Instance(threading.Condition,())
 
@@ -108,6 +113,7 @@ class TDC(RepeatingTaskRunner):
         self._enable_HBT_changed(self.enable_HBT)
         # exposure time in ms
         self._exposure_time_changed(self.exposure_time)
+        print('started')
     
     def shutdown(self):
         with self._guard:
@@ -120,6 +126,7 @@ class TDC(RepeatingTaskRunner):
         self.shutdown()
     
     def reset(self):
+        self.stop()
         self.start()
 
     def deinit(self):
@@ -127,10 +134,8 @@ class TDC(RepeatingTaskRunner):
 
     def setup_hbt(self, reso, range):
         prescale = int(np.round((reso/self._timebase).as_num))
-        print('<<< ',reso)
         reso = prescale*self._timebase
         count = int(np.ceil((range/reso).as_num))
-        print('!!!!! ',self._timebase,prescale,reso,count,range)
         with self._guard:
             qutau.setHbtParams(
                 prescale,
@@ -160,10 +165,15 @@ class TDC(RepeatingTaskRunner):
             qutau.getHbtIntegrationTime(ctypes.byref(time))
             time = time.value
             qutau.freezeBuffers(self.freeze)
+        total_count = total_count.value
+        last_count = last_count.value
+        last_rate = last_rate.value
+#        print('hbt ',total_count,last_count,total_count/time,last_rate)
         return HBTResult(
             bin_size = dt,
             start_delay = -fun.indexOffset*dt,
             raw_result = fun.values[:fun.size],
             integration_time = time*pq.s,
+            signal_ratio = self.signal_ratio,
         )
 

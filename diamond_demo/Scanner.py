@@ -11,27 +11,6 @@ from .hwctrl.PhotonCounting import TDC
 from .hwctrl.Positioning import Positioning
 from .hwctrl.FlyCam import FlyCam
 
-#################################################################################
-
-# helper class for Sample size
-class Size:
-    def __init__(self, height, width):
-        self.height = height
-        self.width = width
-
-    # override multiplication
-    def __mul__(self, other):
-        self.width *= other
-        self.height *= other
-        return self
-
-    # override division
-    def __div__(self, other):
-        self.width /= other
-        self.height /= other
-        return self
-
-
 #################################################################
 
 
@@ -112,19 +91,23 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
         handler = QuantityTrait(pq.V),
         depends_on = '_pos:piezo_voltage,_focus_end',
     )
-    background_rate = QuantityTrait(pq.kHz)
+    signal_ratio = tr.DelegatesTo('_tdc')
+    auto_correction = tr.Bool
 
     auto_optimisation = tr.Bool
     optimisation_interval = QuantityArrayTrait(30*pq.s)
     _last_optim = tr.CFloat()
     _optim_step = QuantityTrait(0.1*pq.um)
-    _optim_size = tr.Int(6)
+    _optim_size = tr.Int(7)
     _last_hbt = tr.CFloat()
     mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
+    _previous_mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
     _cur_map = tr.Instance(FluorescenceMap)
     _cur_idx = tr.Array(int,shape=(2,))
     new_hbt = tr.Event
 
+    fb_map = tr.Instance(FluorescenceMap)    
+    
     # scanner class: needs sampleSize (to calculate the max and min angles for the galvo) and
     #               the distance from the galvo to the lens
 
@@ -133,7 +116,6 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
         kw.setdefault('focus',0*pq.V)
         super(ScanningRFMeasurement,self).__init__(**kw)
         self._pos
-        self._tdc.reset()
 
         if False:
             self.initCamera()
@@ -158,6 +140,12 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     def _set_focus(self, focus):
         self._pos.piezo_voltage =  self._focus_end - focus
 
+    def _fb_map_default(self):
+        return FluorescenceMap(
+            shape = (self._optim_size, self._optim_size),
+            step = (self._optim_step, self._optim_step)
+        )
+        
     def deinit(self):
         self._tdc.deinit()
         self._pos._release_tasks()
@@ -169,14 +157,13 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
         self.mode = 'idle'
 
     def _mode_changed(self,old,new):
+        self._previous_mode = old
         self._tdc.freeze = new != 'hbt'
         if new == 'optimising':
-            map = FluorescenceMap(
-                shape = (self._optim_size, self._optim_size),
-                step = (self._optim_step, self._optim_step)
-            )
+            map = self._fb_map_default()
             map.centre = self.position
             self._scan_map(map)
+            self.fb_map = map
 
     @tr.on_trait_change('_tdc:new_data')
     def _got_new_data(self, rates):
@@ -185,7 +172,8 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
             if self.mode in ['mapping','optimising']:
                 cm = self._cur_map
                 ci = self._cur_idx
-                cm.update(tuple(ci),rates.sum())
+                if ci[1]>=0:
+                    cm.update(tuple(ci),rates.sum())
                 if ci[0]&1:
                     if ci[1]:
                         ci[1] -= 1
@@ -202,7 +190,7 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
                         self._process_optimisation(cm)
                     self.mode=dict(
                         mapping='idle',
-                        optimising='hbt' if self._tdc.enable_HBT else 'on_target'
+                        optimising='hbt' if self._previous_mode=='hbt' else 'on_target'
                     )[self.mode]
                 else:
                     tci = tuple(ci)
@@ -221,27 +209,41 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
 
     def _process_optimisation(self, map):
         from yde.lib.py2to3 import monotonic
+        from scipy.stats import scoreatpercentile
 
         min,max = map.data.min(), map.data.max()
-        isum = 1/map.data.sum()
-        x = (map.X * map.data).sum()*isum
-        y = (map.Y * map.data).sum()*isum
+        data = map.data
+        bg = scoreatpercentile(data,20)
+        bg = data[data<=bg].mean()
+        data = data - bg
+        norm = 1/data.mean()
+        xs = (map.X * data).mean()
+        ys = (map.Y * data).mean()
+        x = xs*norm
+        y = ys*norm
         drift = pq.asanyarray([x,y]) - map.centre
-        print('optimisation: ',min,max,drift)
-        self.position_offset += drift
-        self.position = map.centre
+        print('optimisation: ',min,bg,max,drift,xs,ys,1/norm)
+        if self._previous_mode == 'idle':
+            self.position = map.centre + drift
+        else:
+            self.position_offset += drift
+            self.position = map.centre
+        if self.auto_correction:
+            self.signal_ratio = (max-bg)/max
         self._last_optim = monotonic()
 
     def _scan_map(self,map):
-        self._cur_idx = 0,0
+        self._cur_idx = 0,-1
         self._cur_map = map
         self.position = pq.asanyarray([map.X[0,0], map.Y[0,0]])
 
     def scan(self, map):
+        self.position_offset = (0,0)*pq.um
         self._scan_map(map)
         self.mode = 'mapping'
         
     def choose_point(self, point):
+        self.mode = 'idle'
         self.position = point
         self.mode = 'optimising'
 

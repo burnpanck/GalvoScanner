@@ -161,7 +161,7 @@ print(types, statics, functions)
 wrapper_src = _header
 
 no_error_return = set("""
-getHbtFitStartParams createHbtFunction
+getHbtFitStartParams createHbtFunction releaseHbtFunction
 """.split())
 for name,info in functions.items():
     assert name.startswith('TDC_')
