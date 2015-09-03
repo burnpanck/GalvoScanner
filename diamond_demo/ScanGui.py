@@ -482,7 +482,7 @@ class ScanGui(tr.HasTraits):
         s.countLabel = Tk.Label(frame, text="range")
         s.widthEntry = Tk.Entry(frame, textvariable=s.binWidth)
         s.countEntry = Tk.Entry(frame, textvariable=s.binCount)
-        s.binCount.set("20")
+        s.binCount.set("100")
         s.binWidth.set("1")
         s.widthlabel.grid(row=0, column=3)
         s.widthEntry.grid(row=0, column=4)
@@ -579,7 +579,7 @@ class ScanGui(tr.HasTraits):
         f = TkFigure(
             frame,
             figsize=(9, 3), dpi=100,
-            xlabel='$\tau$ [ns]',ylabel='$g^2$',
+            xlabel=r'$\tau$ [ns]',ylabel='$g^2$',
             left=0.08,bottom=0.15,
             top = 0.04, right=0.03,
             grid=dict(row=7,column=2,columnspan=7,rowspan=1),
