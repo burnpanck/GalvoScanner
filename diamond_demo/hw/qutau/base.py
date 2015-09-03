@@ -1,19 +1,17 @@
-from ctypes import *
 import ctypes
 import os.path
 
 import numpy as np
 
 from yde.lib.misc.basics import ExportHelper
-from yde.lib.inspect import fake_module
 from yde.lib.ctypes_helper import FunctionDeclHelp, EnumMeta
-from yde.lib.ctypes_pycp import parse_header, MakeCtype, SimplifyTypeDecl
 
 __all__,export = ExportHelper.make()
 
-tdcbase = ctypes.windll.tdcbase
-
-_headers_path = os.path.abspath(os.path.join(os.path.dirname(__file__),'TDC_headers'))
+try:
+    tdclib = ctypes.windll.tdcbase
+except AttributeError:
+    tdclib = None
 
 #######################################################
 # tdcdecl.h
@@ -60,12 +58,12 @@ class TDCError(RuntimeError):
         )
 
 
-_type_interp = MakeCtype(dict(
+_type_aliases = dict(
     Int8 = ctypes.c_int8,
     Int32 = ctypes.c_int32,
     Int64 = ctypes.c_int64,
     Bln32 = ctypes.c_int32,
-),stdc_types=True)
+)
 
 #######################################################
 # tdcbase.h
@@ -106,6 +104,12 @@ SimType = EnumMeta.from_defstr('SimType',"""
                                       int TDC units. */
   SIM_NONE                       /**< No type / invalid */
 """,'SIM_')
+_type_aliases.update(
+    TDC_DevType = DevType,
+    TDC_FileFormat = FileFormat,
+    TDC_SignalCond = SignalCond,
+    TDC_SimType = SimType,
+)
 
 # functions
 
@@ -113,7 +117,7 @@ def _handle_errors(ret,fun,funname,args):
     if ret == ErrorCode.Ok:
         return
     try:
-        msg = tdcbase.perror(ret)
+        msg = tdclib.perror(ret)
     except Exception:
         ex = TDCError(funname,ret)
         ex.__suppress_context__ = True   # this exception here is no context
@@ -121,110 +125,48 @@ def _handle_errors(ret,fun,funname,args):
     else:
         raise TDCError(funname,ret,msg)
 
-
-_type_interp.types.update(
-    TDC_DevType = DevType,
-    TDC_FileFormat = FileFormat,
-    TDC_SignalCond = SignalCond,
-    TDC_SimType = SimType,
-)
-types, statics, functions = parse_header(
-    os.path.join(_headers_path,'tdcbase.h'),
-    type_interpreter=_type_interp.visit,
-)
-print(types, statics, functions)
 _ = FunctionDeclHelp(
-    tdcbase,
+    tdclib,
     'TDC_',
     ErrorCode,
-    _handle_errors,
-    signature_provider = lambda name: [t for a,t in functions.pop(name)[1:]]
+    _handle_errors
 )
-
-@_.wrap
-def setChannelDelays(wrapped,delays):
-    delays = np.array(delays,'i4')
-    assert delays.shape==(8,)
-    wrapped(delays.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)))
-
-@_.wrap
-def getDeviceParams(wrapped):
-    channelMask = ctypes.c_int32()
-    coincWin = ctypes.c_int32()
-    expTime = ctypes.c_int32()
-    wrapped(ctypes.byref(channelMask),ctypes.byref(coincWin),ctypes,byref(expTime))
-    return channelMask.value, coincWin.value, expTime.value
-
-@_.wrap
-def getCoincCounters(wrapped):
-    data = np.empty(COINC_CHANNELS,'i4')
-    updates = ctypes.c_int32()
-    wrapped(data.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),ctypes.byref(updates))
-    return data, updates.value
-
-wrapper_src = ""
-no_error_return = set("""
-getVersion perror getTimebase getDevType checkFeatureHbt checkFeatureLifeTime
-""".split())
-for name,v in functions.items():
-    assert name.startswith('TDC_')
-    shortname = name[4:]
-    if False:
-        fun = getattr(tdcbase, name)
-    else:
-        fun = None
-#    fun.argtypes = [t for a,t in v[1:]]
-    if shortname in no_error_return:
-        wrapper_src += """
-def {name}({args}):
-    return tdcbase.TDC_{name}({args})
-        """.format(name=shortname,args=', '.join(a for a,t in v[1:]))
-#        fun.restype = v[0][1]
-    else:
-        wrapper_src += """
-def {name}({args}):
-    _handle_errors(tdcbase.TDC_{name}({args}))
-        """.format(name=shortname,args=', '.join(a for a,t in v[1:]))
-#        fun.restype = ErrorCode
-del name,shortname,v,types,statics,functions,fun
-fake_module(wrapper_src,globals(),locals(),pfx='qutau.tdcbase')
-del wrapper_src
-
 #######################################################
 # tdcstartstop.h
 #######################################################
 
 CROSS_CHANNELS = 8
 
-@_.declare(ctypes.c_int32)
-def enableStartStop(enable):
-    pass
+if tdclib is not None:
+    @_.declare(ctypes.c_int32)
+    def enableStartStop(enable):
+        pass
 
-@_.declare(ctypes.c_int32, ctypes.c_int32)
-def setHistogramParams(binWidth, binCount):
-    pass
+    @_.declare(ctypes.c_int32, ctypes.c_int32)
+    def setHistogramParams(binWidth, binCount):
+        pass
 
-@_.wrap(ctypes.c_int32_p, ctypes.c_int32_p)
-def getHistogramParams(wrapped):
-    binWidth = ctypes.c_int32()
-    binCount = ctypes.c_int32()
-    wrapped(ctypes.byref(binWidth), ctypes.byref(binCount))
-    return binWidth, binCount
+    @_.wrap(ctypes.c_int32_p, ctypes.c_int32_p)
+    def getHistogramParams(wrapped):
+        binWidth = ctypes.c_int32()
+        binCount = ctypes.c_int32()
+        wrapped(ctypes.byref(binWidth), ctypes.byref(binCount))
+        return binWidth, binCount
 
-@_.declare()
-def clearAllHistograms():
-    pass
+    @_.declare()
+    def clearAllHistograms():
+        pass
 
-@_.wrap(
-    ctypes.c_int32, ctypes.c_int32,
-    ctypes.c_int32,
-    ctypes.c_int32_p, ctypes.c_int32_p,
-    ctypes.c_int32_p, ctypes.c_int32_p,
-    ctypes.c_int32_p, ctypes.c_int32_p,
-    ctypes.c_int64_p
-)
-def getHistogram(wrapped, chanA, chanB, reset):
-    raise NotImplementedError
+    @_.wrap(
+        ctypes.c_int32, ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_int32_p, ctypes.c_int32_p,
+        ctypes.c_int32_p, ctypes.c_int32_p,
+        ctypes.c_int32_p, ctypes.c_int32_p,
+        ctypes.c_int64_p
+    )
+    def getHistogram(wrapped, chanA, chanB, reset):
+        raise NotImplementedError
 
 #########################################################################################################
 # tdchbt.h
@@ -288,42 +230,10 @@ FctType = EnumMeta.from_defstr("""
 """,'FCTTYPE_')
 
 
-_type_interp.types.update(
+_type_aliases.update(
     TDC_HbtFunction = HbtFunction,
-    TDC_FctType = FctType,
+    HBT_FctType = FctType,
 )
-types, statics, functions = parse_header(
-    os.path.join(_headers_path,'tdchbt.h'),
-    type_interpreter=_type_interp.visit,
-)
-
-wrapper_src = ""
-no_error_return = set("""
-getHbtFitStartParams createHbtFunction
-""".split())
-for name,v in functions.items():
-    assert name.startswith('TDC_')
-    shortname = name[4:]
-    if False:
-        fun = getattr(tdcbase, name)
-    else:
-        fun = None
-    fun.argtypes = [t for a,t in v[1:]]
-    if shortname in no_error_return:
-        wrapper_src += """
-def {name}({args}):
-    return tdcbase.TDC_{name}({args})
-        """.format(name=shortname,args=', '.join(a for a,t in v[1:]))
-        fun.restype = v[0][1]
-    else:
-        wrapper_src += """
-def {name}({args}):
-    _handle_errors(tdcbase.TDC_{name}({args}))
-        """.format(name=shortname,args=', '.join(a for a,t in v[1:]))
-        fun.restype = ErrorCode
-del name,shortname,v,types,statics,functions,fun
-fake_module(wrapper_src,globals(),locals(),pfx='qutau.tdchbt')
-del wrapper_src
 
 ################################################################################################################################################
 # tdclifetm.h
