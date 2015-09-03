@@ -29,7 +29,7 @@ from ..base import *
 
 revmap = {
     getattr(ctypes,'c_'+n):'ctypes.c_'+n
-    for n in 'float double int8 int16 int32 int64 uint8 uint16 uint32 uint64'.split()
+    for n in 'char float double int8 int16 int32 int64 uint8 uint16 uint32 uint64'.split()
 }
 revmap.update({
     ctypes.POINTER(k):'ctypes.POINTER(%s)'%v
@@ -43,6 +43,8 @@ def qualtname(type):
     tname = type.__name__
     if tname.startswith('LP_'):
         tname = 'ctypes.POINTER('+qualtname(type._type_)+')'
+    else:
+        print(tname)
     return tname
 
 @attribute_proxy

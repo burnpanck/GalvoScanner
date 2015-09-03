@@ -35,7 +35,7 @@ tdclib.TDC_getVersion.argtypes = []
 def getVersion():
     return tdclib.TDC_getVersion()
         
-tdclib.TDC_perror.restype = ctypes.POINTER(c_char)
+tdclib.TDC_perror.restype = ctypes.POINTER(ctypes.c_char)
 tdclib.TDC_perror.argtypes = [ctypes.c_int32]
 def perror(rc):
     return tdclib.TDC_perror(rc)
@@ -136,7 +136,7 @@ def getLastTimestamps(reset, timestamps, channels, valid):
     _handle_errors(tdclib.TDC_getLastTimestamps(reset, timestamps, channels, valid),tdclib.TDC_getLastTimestamps,"TDC_getLastTimestamps",(reset, timestamps, channels, valid))
         
 tdclib.TDC_writeTimestamps.restype = ctypes.c_int32
-tdclib.TDC_writeTimestamps.argtypes = [ctypes.POINTER(c_char), FileFormat]
+tdclib.TDC_writeTimestamps.argtypes = [ctypes.POINTER(ctypes.c_char), FileFormat]
 def writeTimestamps(filename, format):
     _handle_errors(tdclib.TDC_writeTimestamps(filename, format),tdclib.TDC_writeTimestamps,"TDC_writeTimestamps",(filename, format))
         
@@ -146,7 +146,7 @@ def inputTimestamps(timestamps, channels, count):
     _handle_errors(tdclib.TDC_inputTimestamps(timestamps, channels, count),tdclib.TDC_inputTimestamps,"TDC_inputTimestamps",(timestamps, channels, count))
         
 tdclib.TDC_readTimestamps.restype = ctypes.c_int32
-tdclib.TDC_readTimestamps.argtypes = [ctypes.POINTER(c_char), FileFormat]
+tdclib.TDC_readTimestamps.argtypes = [ctypes.POINTER(ctypes.c_char), FileFormat]
 def readTimestamps(filename, format):
     _handle_errors(tdclib.TDC_readTimestamps(filename, format),tdclib.TDC_readTimestamps,"TDC_readTimestamps",(filename, format))
         
