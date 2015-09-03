@@ -52,7 +52,10 @@ def {fun}({args}):
             argtypes=argtypes,
             fun=fun,
             args=args,
-            body=body.format(wrapped=wrapped)
+            body=body.format(
+                wrapped='_handle_errors('+wrapped,
+                pw=',%s,"%s",(%s))'%(wrapped,'TDC_'+fun,args),
+            )
         )
     return decl
 
@@ -72,21 +75,21 @@ wrapper_src = _header
 wrapper_src += mkwrap.setChannelDelays('delays',"""
     delays = np.array(delays,'i4')
     assert delays.shape==(8,)
-    {wrapped}(delays.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)))
+    {wrapped}(delays.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))){pw}
 """)
 
 wrapper_src += mkwrap.getDeviceParams('',"""
     channelMask = ctypes.c_int32()
     coincWin = ctypes.c_int32()
     expTime = ctypes.c_int32()
-    {wrapped}(ctypes.byref(channelMask),ctypes.byref(coincWin),ctypes,byref(expTime))
+    {wrapped}(ctypes.byref(channelMask),ctypes.byref(coincWin),ctypes,byref(expTime)){pw}
     return channelMask.value, coincWin.value, expTime.value
 """)
 
 wrapper_src += mkwrap.getCoincCounters('',"""
     data = np.empty(COINC_CHANNELS,'i4')
     updates = ctypes.c_int32()
-    {wrapped}(data.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),ctypes.byref(updates))
+    {wrapped}(data.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),ctypes.byref(updates)){pw}
     return data, updates.value
 """)
 
@@ -116,7 +119,7 @@ def {name}({args}):
     else:
         wrapper_src += """
 def {name}({args}):
-    _handle_errors({wrapped}({args}))
+    _handle_errors({wrapped}({args}),{wrapped},"TDC_{name}",({args}))
         """.format(name=fun,wrapped=wrapped,args=args)
 #        fun.restype = ErrorCode
 
@@ -169,7 +172,7 @@ def {name}({args}):
     else:
         wrapper_src += """
 def {name}({args}):
-    _handle_errors({wrapped}({args}))
+    _handle_errors({wrapped}({args}),{wrapped},"TDC_{name}",({args}))
         """.format(name=fun,wrapped=wrapped,args=args)
 #        fun.restype = ErrorCode
 

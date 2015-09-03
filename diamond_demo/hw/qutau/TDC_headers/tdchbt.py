@@ -9,57 +9,57 @@ from ..base import *
 tdclib.TDC_enableHbt.restype = ctypes.c_int
 tdclib.TDC_enableHbt.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def enableHbt(type, par, count):
-    _handle_errors(tdclib.TDC_enableHbt(type, par, count))
+    _handle_errors(tdclib.TDC_enableHbt(type, par, count),tdclib.TDC_enableHbt,"TDC_enableHbt",(type, par, count))
         
 tdclib.TDC_setHbtParams.restype = ctypes.c_int
 tdclib.TDC_setHbtParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def setHbtParams(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtParams(type, par, count))
+    _handle_errors(tdclib.TDC_setHbtParams(type, par, count),tdclib.TDC_setHbtParams,"TDC_setHbtParams",(type, par, count))
         
 tdclib.TDC_setHbtDetectorParams.restype = ctypes.c_int
 tdclib.TDC_setHbtDetectorParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def setHbtDetectorParams(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtDetectorParams(type, par, count))
+    _handle_errors(tdclib.TDC_setHbtDetectorParams(type, par, count),tdclib.TDC_setHbtDetectorParams,"TDC_setHbtDetectorParams",(type, par, count))
         
 tdclib.TDC_setHbtInput.restype = ctypes.c_int
 tdclib.TDC_setHbtInput.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def setHbtInput(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtInput(type, par, count))
+    _handle_errors(tdclib.TDC_setHbtInput(type, par, count),tdclib.TDC_setHbtInput,"TDC_setHbtInput",(type, par, count))
         
 tdclib.TDC_switchHbtInternalApds.restype = ctypes.c_int
 tdclib.TDC_switchHbtInternalApds.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def switchHbtInternalApds(type, par, count):
-    _handle_errors(tdclib.TDC_switchHbtInternalApds(type, par, count))
+    _handle_errors(tdclib.TDC_switchHbtInternalApds(type, par, count),tdclib.TDC_switchHbtInternalApds,"TDC_switchHbtInternalApds",(type, par, count))
         
 tdclib.TDC_resetHbtCorrelations.restype = ctypes.c_int
 tdclib.TDC_resetHbtCorrelations.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def resetHbtCorrelations(type, par, count):
-    _handle_errors(tdclib.TDC_resetHbtCorrelations(type, par, count))
+    _handle_errors(tdclib.TDC_resetHbtCorrelations(type, par, count),tdclib.TDC_resetHbtCorrelations,"TDC_resetHbtCorrelations",(type, par, count))
         
 tdclib.TDC_getHbtEventCount.restype = ctypes.c_int
 tdclib.TDC_getHbtEventCount.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def getHbtEventCount(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtEventCount(type, par, count))
+    _handle_errors(tdclib.TDC_getHbtEventCount(type, par, count),tdclib.TDC_getHbtEventCount,"TDC_getHbtEventCount",(type, par, count))
         
 tdclib.TDC_getHbtIntegrationTime.restype = ctypes.c_int
 tdclib.TDC_getHbtIntegrationTime.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def getHbtIntegrationTime(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtIntegrationTime(type, par, count))
+    _handle_errors(tdclib.TDC_getHbtIntegrationTime(type, par, count),tdclib.TDC_getHbtIntegrationTime,"TDC_getHbtIntegrationTime",(type, par, count))
         
 tdclib.TDC_getHbtCorrelations.restype = ctypes.c_int
 tdclib.TDC_getHbtCorrelations.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def getHbtCorrelations(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtCorrelations(type, par, count))
+    _handle_errors(tdclib.TDC_getHbtCorrelations(type, par, count),tdclib.TDC_getHbtCorrelations,"TDC_getHbtCorrelations",(type, par, count))
         
 tdclib.TDC_calcHbtG2.restype = ctypes.c_int
 tdclib.TDC_calcHbtG2.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def calcHbtG2(type, par, count):
-    _handle_errors(tdclib.TDC_calcHbtG2(type, par, count))
+    _handle_errors(tdclib.TDC_calcHbtG2(type, par, count),tdclib.TDC_calcHbtG2,"TDC_calcHbtG2",(type, par, count))
         
 tdclib.TDC_fitHbtG2.restype = ctypes.c_int
 tdclib.TDC_fitHbtG2.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def fitHbtG2(type, par, count):
-    _handle_errors(tdclib.TDC_fitHbtG2(type, par, count))
+    _handle_errors(tdclib.TDC_fitHbtG2(type, par, count),tdclib.TDC_fitHbtG2,"TDC_fitHbtG2",(type, par, count))
         
 tdclib.TDC_getHbtFitStartParams.restype = ctypes.c_int
 tdclib.TDC_getHbtFitStartParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
@@ -69,12 +69,12 @@ def getHbtFitStartParams(type, par, count):
 tdclib.TDC_calcHbtModelFct.restype = ctypes.c_int
 tdclib.TDC_calcHbtModelFct.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def calcHbtModelFct(type, par, count):
-    _handle_errors(tdclib.TDC_calcHbtModelFct(type, par, count))
+    _handle_errors(tdclib.TDC_calcHbtModelFct(type, par, count),tdclib.TDC_calcHbtModelFct,"TDC_calcHbtModelFct",(type, par, count))
         
 tdclib.TDC_generateHbtDemo.restype = ctypes.c_int
 tdclib.TDC_generateHbtDemo.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def generateHbtDemo(type, par, count):
-    _handle_errors(tdclib.TDC_generateHbtDemo(type, par, count))
+    _handle_errors(tdclib.TDC_generateHbtDemo(type, par, count),tdclib.TDC_generateHbtDemo,"TDC_generateHbtDemo",(type, par, count))
         
 tdclib.TDC_createHbtFunction.restype = ctypes.c_int
 tdclib.TDC_createHbtFunction.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
@@ -84,5 +84,5 @@ def createHbtFunction(type, par, count):
 tdclib.TDC_releaseHbtFunction.restype = ctypes.c_int
 tdclib.TDC_releaseHbtFunction.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
 def releaseHbtFunction(type, par, count):
-    _handle_errors(tdclib.TDC_releaseHbtFunction(type, par, count))
+    _handle_errors(tdclib.TDC_releaseHbtFunction(type, par, count),tdclib.TDC_releaseHbtFunction,"TDC_releaseHbtFunction",(type, par, count))
         
