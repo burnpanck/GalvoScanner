@@ -26,12 +26,22 @@ from ..base import _handle_errors, tdclib
 from ..base import *
 """
 
+
+revmap = {
+    getattr(ctypes,'c_'+n):'ctypes.c_'+n
+    for n in 'float double int8 int16 int32 int64 uint8 uint16 uint32 uint64'.split()
+}
+revmap.update({
+    ctypes.POINTER(k):'ctypes.POINTER(%s)'%v
+    for k,v in revmap.items()
+})
 def qualtname(type):
     if type is None: return 'None'
+    ret = revmap.get(type,None)
+    if ret is not None:
+        return ret
     tname = type.__name__
-    if tname.startswith('c_'):
-        tname = 'ctypes.'+tname
-    elif tname.startswith('LP_'):
+    if tname.startswith('LP_'):
         tname = 'ctypes.POINTER('+qualtname(type._type_)+')'
     return tname
 
