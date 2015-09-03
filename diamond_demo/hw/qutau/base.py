@@ -131,6 +131,10 @@ _ = FunctionDeclHelp(
     ErrorCode,
     _handle_errors
 )
+
+def funfix(staticmethod):
+    return staticmethod.__func__
+    
 #######################################################
 # tdcstartstop.h
 #######################################################
@@ -138,14 +142,17 @@ _ = FunctionDeclHelp(
 CROSS_CHANNELS = 8
 
 if tdclib is not None:
+    @funfix
     @_.declare(ctypes.c_int32)
     def enableStartStop(enable):
         pass
 
+    @funfix
     @_.declare(ctypes.c_int32, ctypes.c_int32)
     def setHistogramParams(binWidth, binCount):
         pass
 
+    @funfix
     @_.wrap(ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32))
     def getHistogramParams(wrapped):
         binWidth = ctypes.c_int32()
@@ -153,10 +160,12 @@ if tdclib is not None:
         wrapped(ctypes.byref(binWidth), ctypes.byref(binCount))
         return binWidth, binCount
 
+    @funfix
     @_.declare()
     def clearAllHistograms():
         pass
 
+    @funfix
     @_.wrap(
         ctypes.c_int32, ctypes.c_int32,
         ctypes.c_int32,

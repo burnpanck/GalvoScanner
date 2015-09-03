@@ -149,7 +149,7 @@ wrapper_src = _header
 no_error_return = set("""
 getHbtFitStartParams createHbtFunction
 """.split())
-for name,înfo in functions.items():
+for name,info in functions.items():
     assert name.startswith('TDC_')
     fun = name[4:]
     wrapped = 'tdclib.'+name

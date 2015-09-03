@@ -140,17 +140,17 @@ class ScanGui(tr.HasTraits):
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
         s.focusVar = Tk.StringVar()
+        s.focusEntry = Tk.Entry(frame, textvariable=s.focusVar)
+        s.focusEntry.grid(row=0, column=0)
         self.on_trait_change(
+            lambda: s.focusEntry.event_generate('<<update>>', when='tail'),
             'focus',
-            lambda: s.focusEntry.event_generate('<<update>>', when='tail')
         )
         self.trait_property_changed('focus',self.focus)
-        s.focusEntry = Tk.Entry(frame, textvariable=s.focusVar)
         s.focusEntry.bind(
             "<<update>>",
             lambda: s.focusVar.set(str(self.focus.mag_in(pq.V))),
         )
-        s.focusEntry.grid(row=0, column=0)
         s.focus = Tk.Button(
             frame, text="Set Focus",
             command=cb(lambda: self.trait_set(focus=float(s.focusVar.get())*pq.V))
