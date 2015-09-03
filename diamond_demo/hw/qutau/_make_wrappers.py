@@ -1,3 +1,4 @@
+
 from ctypes import *
 import ctypes
 import os.path
@@ -26,6 +27,7 @@ from ..base import *
 """
 
 def qualtname(type):
+    if type is None: return 'None'
     tname = type.__name__
     if tname.startswith('c_'):
         tname = 'ctypes.'+tname

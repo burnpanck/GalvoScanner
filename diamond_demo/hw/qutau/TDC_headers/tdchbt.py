@@ -7,82 +7,230 @@ from ..base import _handle_errors, tdclib
 from ..base import *
 
 tdclib.TDC_enableHbt.restype = ctypes.c_int
-tdclib.TDC_enableHbt.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def enableHbt(type, par, count):
-    _handle_errors(tdclib.TDC_enableHbt(type, par, count),tdclib.TDC_enableHbt,"TDC_enableHbt",(type, par, count))
+tdclib.TDC_enableHbt.argtypes = [ctypes.c_int]
+def enableHbt(enable):
+    _handle_errors(tdclib.TDC_enableHbt(enable),tdclib.TDC_enableHbt,"TDC_enableHbt",(enable))
         
 tdclib.TDC_setHbtParams.restype = ctypes.c_int
-tdclib.TDC_setHbtParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def setHbtParams(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtParams(type, par, count),tdclib.TDC_setHbtParams,"TDC_setHbtParams",(type, par, count))
+tdclib.TDC_setHbtParams.argtypes = [ctypes.c_int, ctypes.c_int]
+def setHbtParams(binWidth, binCount):
+    _handle_errors(tdclib.TDC_setHbtParams(binWidth, binCount),tdclib.TDC_setHbtParams,"TDC_setHbtParams",(binWidth, binCount))
         
 tdclib.TDC_setHbtDetectorParams.restype = ctypes.c_int
-tdclib.TDC_setHbtDetectorParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def setHbtDetectorParams(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtDetectorParams(type, par, count),tdclib.TDC_setHbtDetectorParams,"TDC_setHbtDetectorParams",(type, par, count))
+tdclib.TDC_setHbtDetectorParams.argtypes = [ctypes.c_double]
+def setHbtDetectorParams(jitter):
+    _handle_errors(tdclib.TDC_setHbtDetectorParams(jitter),tdclib.TDC_setHbtDetectorParams,"TDC_setHbtDetectorParams",(jitter))
         
 tdclib.TDC_setHbtInput.restype = ctypes.c_int
-tdclib.TDC_setHbtInput.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def setHbtInput(type, par, count):
-    _handle_errors(tdclib.TDC_setHbtInput(type, par, count),tdclib.TDC_setHbtInput,"TDC_setHbtInput",(type, par, count))
+tdclib.TDC_setHbtInput.argtypes = [ctypes.c_int, ctypes.c_int]
+def setHbtInput(channel1, channel2):
+    _handle_errors(tdclib.TDC_setHbtInput(channel1, channel2),tdclib.TDC_setHbtInput,"TDC_setHbtInput",(channel1, channel2))
         
 tdclib.TDC_switchHbtInternalApds.restype = ctypes.c_int
-tdclib.TDC_switchHbtInternalApds.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def switchHbtInternalApds(type, par, count):
-    _handle_errors(tdclib.TDC_switchHbtInternalApds(type, par, count),tdclib.TDC_switchHbtInternalApds,"TDC_switchHbtInternalApds",(type, par, count))
+tdclib.TDC_switchHbtInternalApds.argtypes = [ctypes.c_int]
+def switchHbtInternalApds(internal):
+    _handle_errors(tdclib.TDC_switchHbtInternalApds(internal),tdclib.TDC_switchHbtInternalApds,"TDC_switchHbtInternalApds",(internal))
         
 tdclib.TDC_resetHbtCorrelations.restype = ctypes.c_int
-tdclib.TDC_resetHbtCorrelations.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def resetHbtCorrelations(type, par, count):
-    _handle_errors(tdclib.TDC_resetHbtCorrelations(type, par, count),tdclib.TDC_resetHbtCorrelations,"TDC_resetHbtCorrelations",(type, par, count))
+tdclib.TDC_resetHbtCorrelations.argtypes = []
+def resetHbtCorrelations():
+    _handle_errors(tdclib.TDC_resetHbtCorrelations(),tdclib.TDC_resetHbtCorrelations,"TDC_resetHbtCorrelations",())
         
 tdclib.TDC_getHbtEventCount.restype = ctypes.c_int
-tdclib.TDC_getHbtEventCount.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def getHbtEventCount(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtEventCount(type, par, count),tdclib.TDC_getHbtEventCount,"TDC_getHbtEventCount",(type, par, count))
+tdclib.TDC_getHbtEventCount.argtypes = [ctypes.POINTER(ctypes.c_long), ctypes.POINTER(ctypes.c_long), ctypes.POINTER(ctypes.c_double)]
+def getHbtEventCount(totalCount, lastCount, lastRate):
+    _handle_errors(tdclib.TDC_getHbtEventCount(totalCount, lastCount, lastRate),tdclib.TDC_getHbtEventCount,"TDC_getHbtEventCount",(totalCount, lastCount, lastRate))
         
 tdclib.TDC_getHbtIntegrationTime.restype = ctypes.c_int
-tdclib.TDC_getHbtIntegrationTime.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def getHbtIntegrationTime(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtIntegrationTime(type, par, count),tdclib.TDC_getHbtIntegrationTime,"TDC_getHbtIntegrationTime",(type, par, count))
+tdclib.TDC_getHbtIntegrationTime.argtypes = [ctypes.POINTER(ctypes.c_double)]
+def getHbtIntegrationTime(intTime):
+    _handle_errors(tdclib.TDC_getHbtIntegrationTime(intTime),tdclib.TDC_getHbtIntegrationTime,"TDC_getHbtIntegrationTime",(intTime))
         
 tdclib.TDC_getHbtCorrelations.restype = ctypes.c_int
-tdclib.TDC_getHbtCorrelations.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def getHbtCorrelations(type, par, count):
-    _handle_errors(tdclib.TDC_getHbtCorrelations(type, par, count),tdclib.TDC_getHbtCorrelations,"TDC_getHbtCorrelations",(type, par, count))
+tdclib.TDC_getHbtCorrelations.argtypes = [ctypes.c_int, LP_HbtFunction]
+def getHbtCorrelations(forward, fct):
+    _handle_errors(tdclib.TDC_getHbtCorrelations(forward, fct),tdclib.TDC_getHbtCorrelations,"TDC_getHbtCorrelations",(forward, fct))
         
 tdclib.TDC_calcHbtG2.restype = ctypes.c_int
-tdclib.TDC_calcHbtG2.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def calcHbtG2(type, par, count):
-    _handle_errors(tdclib.TDC_calcHbtG2(type, par, count),tdclib.TDC_calcHbtG2,"TDC_calcHbtG2",(type, par, count))
+tdclib.TDC_calcHbtG2.argtypes = [LP_HbtFunction]
+def calcHbtG2(fct):
+    _handle_errors(tdclib.TDC_calcHbtG2(fct),tdclib.TDC_calcHbtG2,"TDC_calcHbtG2",(fct))
         
 tdclib.TDC_fitHbtG2.restype = ctypes.c_int
-tdclib.TDC_fitHbtG2.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def fitHbtG2(type, par, count):
-    _handle_errors(tdclib.TDC_fitHbtG2(type, par, count),tdclib.TDC_fitHbtG2,"TDC_fitHbtG2",(type, par, count))
+tdclib.TDC_fitHbtG2.argtypes = [LP_HbtFunction, 
+  FCTTYPE_NONE,          /**< No function, invalid.
+                              No Parameters. */
+  FCTTYPE_COHERENT,      /**< Coherent light.
+                              No Parameters. */
+  FCTTYPE_THERMAL,       /**< Thermal light source.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE,        /**< Single photon light source.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIBUNCH,     /**< Three level system light source.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERM_JIT,     /**< Thermal with detector jitter considered.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE_JIT,    /**< Single photon with detector jitter considered.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIB_JIT,     /**< Three level system with detector jitter.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERMAL_OFS,   /**< Thermal with addtitional fit of detector offset
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_OFS,    /**< Single photon with addtitional fit of detector offset
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_OFS,     /**< Three level system with addtitional fit of detector offset
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+  FCTTYPE_THERM_JIT_OFS, /**< Thermal with detector jitter considered and offset fit
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_JIT_OFS,/**< Single photon with detector jitter considered and offset fit
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_JIT_OFS  /**< Three level system with detector jitter considered and offset fit
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int)]
+def fitHbtG2(fct, fitType, startParams, fitParams, iterations):
+    _handle_errors(tdclib.TDC_fitHbtG2(fct, fitType, startParams, fitParams, iterations),tdclib.TDC_fitHbtG2,"TDC_fitHbtG2",(fct, fitType, startParams, fitParams, iterations))
         
-tdclib.TDC_getHbtFitStartParams.restype = ctypes.c_int
-tdclib.TDC_getHbtFitStartParams.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def getHbtFitStartParams(type, par, count):
-    return tdclib.TDC_getHbtFitStartParams(type, par, count)
+tdclib.TDC_getHbtFitStartParams.restype = ctypes.POINTER(ctypes.c_double)
+tdclib.TDC_getHbtFitStartParams.argtypes = [
+  FCTTYPE_NONE,          /**< No function, invalid.
+                              No Parameters. */
+  FCTTYPE_COHERENT,      /**< Coherent light.
+                              No Parameters. */
+  FCTTYPE_THERMAL,       /**< Thermal light source.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE,        /**< Single photon light source.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIBUNCH,     /**< Three level system light source.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERM_JIT,     /**< Thermal with detector jitter considered.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE_JIT,    /**< Single photon with detector jitter considered.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIB_JIT,     /**< Three level system with detector jitter.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERMAL_OFS,   /**< Thermal with addtitional fit of detector offset
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_OFS,    /**< Single photon with addtitional fit of detector offset
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_OFS,     /**< Three level system with addtitional fit of detector offset
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+  FCTTYPE_THERM_JIT_OFS, /**< Thermal with detector jitter considered and offset fit
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_JIT_OFS,/**< Single photon with detector jitter considered and offset fit
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_JIT_OFS  /**< Three level system with detector jitter considered and offset fit
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+]
+def getHbtFitStartParams(fctType):
+    return tdclib.TDC_getHbtFitStartParams(fctType)
         
 tdclib.TDC_calcHbtModelFct.restype = ctypes.c_int
-tdclib.TDC_calcHbtModelFct.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def calcHbtModelFct(type, par, count):
-    _handle_errors(tdclib.TDC_calcHbtModelFct(type, par, count),tdclib.TDC_calcHbtModelFct,"TDC_calcHbtModelFct",(type, par, count))
+tdclib.TDC_calcHbtModelFct.argtypes = [
+  FCTTYPE_NONE,          /**< No function, invalid.
+                              No Parameters. */
+  FCTTYPE_COHERENT,      /**< Coherent light.
+                              No Parameters. */
+  FCTTYPE_THERMAL,       /**< Thermal light source.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE,        /**< Single photon light source.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIBUNCH,     /**< Three level system light source.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERM_JIT,     /**< Thermal with detector jitter considered.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE_JIT,    /**< Single photon with detector jitter considered.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIB_JIT,     /**< Three level system with detector jitter.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERMAL_OFS,   /**< Thermal with addtitional fit of detector offset
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_OFS,    /**< Single photon with addtitional fit of detector offset
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_OFS,     /**< Three level system with addtitional fit of detector offset
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+  FCTTYPE_THERM_JIT_OFS, /**< Thermal with detector jitter considered and offset fit
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_JIT_OFS,/**< Single photon with detector jitter considered and offset fit
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_JIT_OFS  /**< Three level system with detector jitter considered and offset fit
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+, ctypes.POINTER(ctypes.c_double), LP_HbtFunction]
+def calcHbtModelFct(fctType, params, fct):
+    _handle_errors(tdclib.TDC_calcHbtModelFct(fctType, params, fct),tdclib.TDC_calcHbtModelFct,"TDC_calcHbtModelFct",(fctType, params, fct))
         
 tdclib.TDC_generateHbtDemo.restype = ctypes.c_int
-tdclib.TDC_generateHbtDemo.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def generateHbtDemo(type, par, count):
-    _handle_errors(tdclib.TDC_generateHbtDemo(type, par, count),tdclib.TDC_generateHbtDemo,"TDC_generateHbtDemo",(type, par, count))
+tdclib.TDC_generateHbtDemo.argtypes = [
+  FCTTYPE_NONE,          /**< No function, invalid.
+                              No Parameters. */
+  FCTTYPE_COHERENT,      /**< Coherent light.
+                              No Parameters. */
+  FCTTYPE_THERMAL,       /**< Thermal light source.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE,        /**< Single photon light source.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIBUNCH,     /**< Three level system light source.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERM_JIT,     /**< Thermal with detector jitter considered.
+                              The function requires 3 parameters: A, c, B */
+  FCTTYPE_SINGLE_JIT,    /**< Single photon with detector jitter considered.
+                              The function requires 1 parameter:
+                              t<sub>1</sub> */
+  FCTTYPE_ANTIB_JIT,     /**< Three level system with detector jitter.
+                              The function requires 4 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub> */
+  FCTTYPE_THERMAL_OFS,   /**< Thermal with addtitional fit of detector offset
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_OFS,    /**< Single photon with addtitional fit of detector offset
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_OFS,     /**< Three level system with addtitional fit of detector offset
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+  FCTTYPE_THERM_JIT_OFS, /**< Thermal with detector jitter considered and offset fit
+                              The function requires 4 parameters: A, c, B, dt */
+  FCTTYPE_SINGLE_JIT_OFS,/**< Single photon with detector jitter considered and offset fit
+                              The function requires 2 parameters:
+                              t<sub>1</sub>, dt */
+  FCTTYPE_ANTIB_JIT_OFS  /**< Three level system with detector jitter considered and offset fit
+                              The function requires 5 parameters:
+                              p<sub>f</sub><sup>2</sup>, c, t<sub>b</sub>, t<sub>a</sub>, dt */
+, ctypes.POINTER(ctypes.c_double), ctypes.c_double]
+def generateHbtDemo(fctType, params, noiseLv):
+    _handle_errors(tdclib.TDC_generateHbtDemo(fctType, params, noiseLv),tdclib.TDC_generateHbtDemo,"TDC_generateHbtDemo",(fctType, params, noiseLv))
         
-tdclib.TDC_createHbtFunction.restype = ctypes.c_int
-tdclib.TDC_createHbtFunction.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def createHbtFunction(type, par, count):
-    return tdclib.TDC_createHbtFunction(type, par, count)
+tdclib.TDC_createHbtFunction.restype = LP_HbtFunction
+tdclib.TDC_createHbtFunction.argtypes = []
+def createHbtFunction():
+    return tdclib.TDC_createHbtFunction()
         
-tdclib.TDC_releaseHbtFunction.restype = ctypes.c_int
-tdclib.TDC_releaseHbtFunction.argtypes = [SimType, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
-def releaseHbtFunction(type, par, count):
-    _handle_errors(tdclib.TDC_releaseHbtFunction(type, par, count),tdclib.TDC_releaseHbtFunction,"TDC_releaseHbtFunction",(type, par, count))
+tdclib.TDC_releaseHbtFunction.restype = None
+tdclib.TDC_releaseHbtFunction.argtypes = [LP_HbtFunction]
+def releaseHbtFunction(fct):
+    _handle_errors(tdclib.TDC_releaseHbtFunction(fct),tdclib.TDC_releaseHbtFunction,"TDC_releaseHbtFunction",(fct))
         
