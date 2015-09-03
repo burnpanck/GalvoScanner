@@ -11,7 +11,7 @@ from yde.lib.ctypes_pycp import parse_header, MakeCtype, SimplifyTypeDecl
 
 __all__,export = ExportHelper.make()
 
-#tdcbase = ctypes.windll.tdcbase
+tdcbase = ctypes.windll.tdcbase
 
 _headers_path = os.path.abspath(os.path.join(os.path.dirname(__file__),'TDC_headers'))
 
@@ -132,7 +132,7 @@ types, statics, functions = parse_header(
     os.path.join(_headers_path,'tdcbase.h'),
     type_interpreter=_type_interp.visit,
 )
-
+print(types, statics, functions)
 _ = FunctionDeclHelp(
     tdcbase,
     'TDC_',

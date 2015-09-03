@@ -10,7 +10,6 @@ import traits.api as tr
 
 from yde.lib.quantity_traits import QuantityArrayTrait, QuantityTrait
 from yde.lib.threading import RepeatingTaskRunner
-
 from ..hw import qutau
 
 class HBTResult(tr.HasStrictTraits):
