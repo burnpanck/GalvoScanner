@@ -114,16 +114,17 @@ _type_aliases.update(
 # functions
 
 def _handle_errors(ret,fun,funname,args):
+    ret = ErrorCode(ret)
     if ret == ErrorCode.Ok:
         return
     try:
-        msg = tdclib.perror(ret)
+        msg = ctypes.c_char_p(tdclib.TDC_perror(ret))
     except Exception:
-        ex = TDCError(funname,ret)
+        ex = TDCError(funname,ret,'(arguments: %s)'%str(args))
         ex.__suppress_context__ = True   # this exception here is no context
         raise ex
     else:
-        raise TDCError(funname,ret,msg)
+        raise TDCError(funname,ret,msg+'(arguments: %s)'%str(args))
 
 _ = FunctionDeclHelp(
     tdclib,

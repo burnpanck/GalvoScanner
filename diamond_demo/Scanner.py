@@ -36,26 +36,35 @@ class Size:
 
 
 class FluorescenceMap(tr.HasStrictTraits):
-    start = QuantityArrayTrait(pq.um,shape=(2,))
     step = QuantityArrayTrait(pq.um,shape=(2,))
     shape = tr.Array(int,shape=(2,))
+    centre = QuantityArrayTrait(pq.um,shape=(2,))
+    start = tr.Property(
+        handler = QuantityArrayTrait(pq.um,shape=(2,)),
+        fget = lambda self:self.centre-0.5*(self.shape-1)*self.step,
+        depends_on = 'centre,shape,step',
+    )
     stop = tr.Property(
         handler = QuantityArrayTrait(pq.um,shape=(2,)),
-        fget = lambda self:self.start+(self.shape-1)*self.step,
-    )
-    centre = tr.Property(
-        handler = QuantityArrayTrait(pq.um,shape=(2,)),
-        fget=lambda self:self.start+0.5*(self.shape-1)*self.step,
+        fget = lambda self:self.centre+0.5*(self.shape-1)*self.step,
+        depends_on = 'centre,shape,step',
     )
     data = QuantityArrayTrait(pq.kHz,shape=(None,None))
-    X = tr.Property(QuantityArrayTrait(pq.um,shape=(None,None)))
-    Y = tr.Property(QuantityArrayTrait(pq.um,shape=(None,None)))
+    X = tr.Property(
+        QuantityArrayTrait(pq.um,shape=(None,None)),
+        depends_on = 'centre,shape,step'
+    )
+    Y = tr.Property(
+        QuantityArrayTrait(pq.um,shape=(None,None)),
+        depends_on = 'centre,shape,step'
+    )
     extents = tr.Property(
         handler = QuantityArrayTrait(pq.um,shape=(2,2),desc='(x/y,min/max'),
         fget=lambda self:(
-            self.start
-            + np.c_[[-0.5,-0.5],self.shape-0.5].T*self.step
+            self.centre
+            + np.r_[-0.5,0.5][:,None]*self.shape*self.step
         ).T,
+        depends_on = 'centre,shape,step',
     )
     region_updated = tr.Event(
         tr.Tuple(tr.Any,tr.Any),
@@ -70,26 +79,14 @@ class FluorescenceMap(tr.HasStrictTraits):
     def _get_Y(self):
         return self.start[1] + np.tile(np.arange(self.shape[1]),(self.shape[0],1)).T*self.step[1]
 
-
     def _data_default(self):
-        return np.zeros(self.shape[::-1])
+        return np.zeros(self.shape[::-1]) * pq.kHz
+        
+    def _data_changed(self, new):
+        self.region_updated = np.s_[:,:], new
 
-
-    def config(self):
-        # max and min x are half the sample size since we place the sample in such a way that it is centered arround the
-        # origin of lens
-        self.maxX = self.sampleSize.width / 2.0
-        self.minX = -self.sampleSize.width / 2.0
-
-        self.maxY = self.sampleSize.height / 2.0
-        self.minY = -self.sampleSize.height / 2.0
-
-        if not hasattr(self, 'xsteps'):
-            self.xsteps = np.linspace(0, 0.05, 500)
-        if not hasattr(self, 'ysteps'):
-            self.ysteps = np.linspace(0, 0.05, 500)
-
-        self.dataArray = np.ones((len(self.ysteps), len(self.xsteps)), dtype=np.float64)
+    def _shape_changed(self):
+        self.data = self._data_default()
 
     def update(self,slice,data):
         self.data[slice] = data
@@ -184,39 +181,43 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     @tr.on_trait_change('_tdc:new_data')
     def _got_new_data(self, rates):
         from yde.lib.py2to3 import monotonic
-        if self.mode in ['mapping','optimising']:
-            cm = self._cur_map
-            ci = self._cur_idx
-            cm.update(tuple(ci),rates.sum())
-            if ci[0]&1:
-                if ci[1]:
-                    ci[1] -= 1
+        try:
+            if self.mode in ['mapping','optimising']:
+                cm = self._cur_map
+                ci = self._cur_idx
+                cm.update(tuple(ci),rates.sum())
+                if ci[0]&1:
+                    if ci[1]:
+                        ci[1] -= 1
+                    else:
+                        ci[0] += 1
                 else:
-                    ci[0] += 1
-            else:
-                if ci[1]+1<cm.shape[1]:
-                    ci[1] += 1
+                    if ci[1]+1<cm.shape[1]:
+                        ci[1] += 1
+                    else:
+                        ci[0] += 1
+                if ci[0]>=cm.shape[0]:
+                    self._cur_map = None
+                    if self.mode=='optimising':
+                        self._process_optimisation(cm)
+                    self.mode=dict(
+                        mapping='idle',
+                        optimising='hbt' if self._tdc.enable_HBT else 'on_target'
+                    )[self.mode]
                 else:
-                    ci[0] += 1
-            if ci[0]>=cm.shape[0]:
-                self._cur_map = None
-                if self.mode=='optimising':
-                    self._process_optimisation(cm)
-                self.mode=dict(
-                    mapping='idle',
-                    optimising='hbt' if self._tdc.enable_HBT else 'on_target'
-                )[self.mode]
-            else:
-                tci = tuple(ci)
-                self.position = cm.X[tci], cm.Y[tci]
-        elif self.mode in ['on_target', 'hbt']:
-            now = monotonic()
-            if self.mode == 'hbt':
-                if self._last_hbt + 1 <= now:
-                    self.new_hbt = self._tdc.hbt
-                    self._last_hbt = now
-            if self.auto_optimisation and self._last_optim + self.optimisation_interval.mag_in(pq.s) <= now:
-                self.mode = 'optimising'
+                    tci = tuple(ci)
+                    self.position = pq.asanyarray([cm.X[tci], cm.Y[tci]])
+            elif self.mode in ['on_target', 'hbt']:
+                now = monotonic()
+                if self.mode == 'hbt':
+                    if self._last_hbt + 1 <= now:
+                        self.new_hbt = self._tdc.hbt
+                        self._last_hbt = now
+                if self.auto_optimisation and self._last_optim + self.optimisation_interval.mag_in(pq.s) <= now:
+                    self.mode = 'optimising'
+        except Exception:
+            self.mode = 'idle'
+            raise
 
     def _process_optimisation(self, map):
         from yde.lib.py2to3 import monotonic
@@ -234,8 +235,12 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     def _scan_map(self,map):
         self._cur_idx = 0,0
         self._cur_map = map
-        self.position = map.X[0,0], map.Y[0,0]
+        self.position = pq.asanyarray([map.X[0,0], map.Y[0,0]])
 
+    def scan(self, map):
+        self._scan_map(map)
+        self.mode = 'mapping'
+        
     def choose_point(self, point):
         self.position = point
         self.mode = 'optimising'

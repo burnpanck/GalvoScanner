@@ -4,6 +4,7 @@ from functools import partial
 import time
 import traceback
 import importlib
+import os.path
 
 # conditional module loading python 2/3
 try:
@@ -22,6 +23,7 @@ from .Scanner import ScanningRFMeasurement, FluorescenceMap
 
 from yde.lib.misc.basics import Struct
 from yde.lib.quantity_traits import QuantityArrayTrait
+from yde.lib.traits_ext import declared_trait
 
 def catch2messagebox(fun):
     """ wrap function to display a message when an exception happens
@@ -92,27 +94,31 @@ class ScanGui(tr.HasTraits):
     def deinit(self):
         self._s.deinit()
 
-    @staticmethod
-    def _config_hook(dct):
-        if "_eval_" in dct:
-            ctxt = dict()
-            if "libraries" in dct:
-                for lib in dct["libraries"]:
-                    lib = str(lib)
-                    ctxt[lib] = importlib.import_module(lib)
-            return eval(dct["expression"],ctxt,ctxt)
-        return dct
-
+    @classmethod
+    def _handle_cfg(cls, obj, settings):
+        for k,v in settings.items():
+            t = declared_trait(obj.trait(k))
+            if isinstance(t,tr.Instance):
+                cls._handle_cfg(getattr(obj, k), v)
+                continue
+            if (isinstance(t,QuantityArrayTrait) or isinstance(t,tr.DelegatesTo)) and isinstance(v,str):
+                value,unit = v.rsplit(None,1)
+                v = eval(value)*getattr(pq,unit)
+            setattr(obj, k, v)
+        
     def load_config(self, configFile):
         import json
-
-        cfg = json.loads(open(configFile).read(), object_hook=self._config_hook)
-        imports = cfg.pop("imports",[])
-        settings = cfg.pop('settings',{})
-        for cfgfile in imports:
-            cfg.update(self.load_config(cfgfile))
-        for key,value in settings.items():
-            setattr(self, key, value)
+        configFile = os.path.abspath(configFile)
+        path = os.path.dirname(configFile)
+        with open(configFile,'r') as fh:
+            cfg = json.loads(fh.read())
+        for cfgfile in cfg.pop("imports",[]):
+            cfg.update(self.load_config(os.path.join(path,cfgfile)))
+        for key, obj in zip(
+            'gui galvo'.split(),
+            [self, self._s._pos],
+        ):
+            self._handle_cfg(obj, cfg.pop(key, {}))
         return cfg
 
     def __init__(self, master, config_file=None, **kw):
@@ -315,6 +321,7 @@ class ScanGui(tr.HasTraits):
         s.countLabel.grid(row=1, column=3)
         s.countEntry.grid(row=1, column=4)
 
+        
         self._create_scan_plot(frame)
         self._create_rate_plot(frame)
         self._create_HBT_plot(frame)
@@ -322,6 +329,7 @@ class ScanGui(tr.HasTraits):
         frame.config()
 
         self._frame = frame
+
 
     def _create_scan_plot(self, frame):
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -331,8 +339,10 @@ class ScanGui(tr.HasTraits):
         f.subplots_adjust(left=0.2)
         ax = f.add_subplot(111)
         xr,yr = self.map.extents.mag_in(pq.um)
+        data = self.map.data.magnitude
+        print('!!!! ',xr,yr,self.map.step,self.map.shape)
         img = ax.pcolorfast(
-            xr,yr,self.map.data.magnitude,
+            xr,yr,data,
             animated=True,
             cmap='CMRmap',
         )
@@ -352,6 +362,8 @@ class ScanGui(tr.HasTraits):
 
         self._map_image = img
         self._map_canvas = canvas
+        
+        frame.bind('<<map_changed>>',self._update_map_image)
 
 
     def _create_rate_plot(self, frame):
@@ -440,10 +452,12 @@ class ScanGui(tr.HasTraits):
         print('update trace data done')
 
     def _rate_trace_changed(self):
+        if not self._frame:
+            return
         print('rate_trace_Changed')
         self._frame.event_generate('<<rate_trace>>',when='tail')
         print('rate_trace_Changed done')
-    def _update_rate_trace(self):
+    def _update_rate_trace(self, event):
         print('updating plot on-screen')
         new = self.rate_trace
         self._rate_plot.set_ydata(new.magnitude)
@@ -509,10 +523,15 @@ class ScanGui(tr.HasTraits):
 
     @tr.on_trait_change('map:region_updated')
     def _map_updated(self,event):
+        if not self._frame:
+            return
         slice, update = event
-        data = self.data.magnitude
+        self._frame.event_generate('<<map_changed>>',when='tail')
+        
+    def _update_map_image(self, event):
+        data = self.map.data.magnitude
         self._map_image.set_data(data)
         self._map_image.set_clim(data.min(),data.max())
-#        self._map_canvas.draw()
+        self._map_canvas.draw()
 
 

@@ -46,7 +46,7 @@ class TDC(RepeatingTaskRunner):
 
     new_data = tr.Event
 
-    _hbt_fun = tr.Instance('TDC.TDC_HbtFunction')
+    _hbt_fun = tr.Any
 
     _last_read = tr.CFloat()
     _min_wait = tr.CFloat(0.005)
@@ -69,23 +69,19 @@ class TDC(RepeatingTaskRunner):
         from yde.lib.py2to3 import monotonic
         now = monotonic()
         with self._guard:
-            print('get coinc')
             buf, nupd = qutau.getCoincCounters()
-            print('get coinc done')
         lr = self._last_read
         if nupd:
             self._last_read = now
             if nupd>1:
                 self.logger.warn('Missed counter updates! (nupd=%d)',nupd)
-            print('notify counts')
             self.new_data = buf[self._channels]/self.exposure_time
-            print('done notify counts')
             
         self.require_update_by(max(
             now + self._min_wait,
             self._last_read + self.exposure_time.mag_in(pq.s)*0.9
         ))
-        print('photon counts ',buf[self._channels],nupd,dt,now-lr,now-self._last_read,self._next_pass-now)
+#        print('photon counts ',buf[self._channels],nupd,dt,now-lr,now-self._last_read,self._next_pass-now)
 
     def _exposure_time_changed(self,value):
         with self._guard:
@@ -115,12 +111,10 @@ class TDC(RepeatingTaskRunner):
     
     def shutdown(self):
         with self._guard:
-            print('shutdown')
             if self._hbt_fun is not None:
                 qutau.releaseHbtFunction(ctypes.byref(self._hbt_fun))
                 self._hbt_fun = None
             qutau.deInit()
-            print('shutdown done')
     
     def failed(self):
         self.shutdown()
@@ -131,10 +125,12 @@ class TDC(RepeatingTaskRunner):
     def deinit(self):
         self.stop()
 
-    def setup_hbt(self, range, reso=1*pq.ns ):
-        prescale = int(round((reso/self._timebase).as_num))
+    def setup_hbt(self, reso, range):
+        prescale = int(np.round((reso/self._timebase).as_num))
+        print('<<< ',reso)
         reso = prescale*self._timebase
         count = int(np.ceil((range/reso).as_num))
+        print('!!!!! ',self._timebase,prescale,reso,count,range)
         with self._guard:
             qutau.setHbtParams(
                 prescale,

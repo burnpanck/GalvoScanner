@@ -27,19 +27,26 @@ class Lens:
 class Positioning(tr.HasStrictTraits):
     """ Controls a two-axis galvo scanner for x/y positioning and a piezo for focus.
     """
-    sensitivity = QuantityArrayTrait([90,90]*pq.V/np.pi,desc="galvo sensitivity V/rad (phi,theta)")
+    sensitivity = QuantityArrayTrait([0.5,0.5]*pq.V*180/np.pi,desc="galvo sensitivity V/rad (phi,theta)")
     galvo_voltage = QuantityArrayTrait(pq.V,shape=(2,),desc='voltage applied to galvo (phi,theta)')
+    galvo_zero = QuantityArrayTrait(
+        [1.20252,-0.03298]*pq.V,
+        shape=(2,),
+        desc='voltage where galvo is at zero angle',
+    )
     piezo_voltage = QuantityTrait(pq.V,desc="piezo for focusing")
     galvo_angle = tr.Property(
         handler = tr.Array(shape=(2,)),
-        fget = lambda self: (self.galvo_voltage/self.sensitivity).as_num,
-        fset = lambda self, angle: self.trait_set(galvo_voltage=angle*self.sensitivity),
+        fget = lambda self: ((self.galvo_voltage-self.galvo_zero)/self.sensitivity).as_num,
+        fset = lambda self, angle: self.trait_set(galvo_voltage=angle*self.sensitivity+self.galvo_zero),
         desc = 'galvo deflection angle in radians (phi,theta)',
+        depends_on = 'galvo_voltage,galvo_zero,sensitivity',
     )
     position = tr.Property(
         handler = QuantityArrayTrait(pq.um,shape=(2,)),
         fget = lambda self: np.tan(self.galvo_angle)*self.focal_plane,
         fset = lambda self, position: self.trait_set(galvo_angle = np.arctan((position/self.focal_plane).as_num)),
+        depends_on = 'galvo_voltage,galvo_zero,sensitivity,focal_plane',
     )
     lens = tr.Instance(Lens, (1.3, 1.5))
     focal_plane = QuantityTrait(1.5*pq.mm)
