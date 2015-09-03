@@ -31,8 +31,8 @@ def qualtname(type):
     tname = type.__name__
     if tname.startswith('c_'):
         tname = 'ctypes.'+tname
-    elif tname.startswith('LP_c_'):
-        tname = 'ctypes.POINTER(ctypes.'+tname[3:]+')'
+    elif tname.startswith('LP_'):
+        tname = 'ctypes.POINTER('+qualtname(type._type_)+')'
     return tname
 
 @attribute_proxy

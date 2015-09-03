@@ -199,7 +199,7 @@ class HbtFunction(ctypes.Structure):
         return np.ctypeslib.as_array(addr, self.capacity)
 
 # Enum
-FctType = EnumMeta.from_defstr("""
+FctType = EnumMeta.from_defstr('FctType', """
   FCTTYPE_NONE,          /**< No function, invalid.
                               No Parameters. */
   FCTTYPE_COHERENT,      /**< Coherent light.
