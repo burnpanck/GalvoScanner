@@ -6,7 +6,7 @@ import numpy as np
 from yde.lib.misc.basics import ExportHelper
 from yde.lib.ctypes_helper import FunctionDeclHelp, EnumMeta
 
-__all__,export = ExportHelper.make()
+__all_inactive__,export = ExportHelper.make()
 
 try:
     tdclib = ctypes.windll.tdcbase
@@ -146,7 +146,7 @@ if tdclib is not None:
     def setHistogramParams(binWidth, binCount):
         pass
 
-    @_.wrap(ctypes.c_int32_p, ctypes.c_int32_p)
+    @_.wrap(ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32))
     def getHistogramParams(wrapped):
         binWidth = ctypes.c_int32()
         binCount = ctypes.c_int32()
@@ -160,10 +160,10 @@ if tdclib is not None:
     @_.wrap(
         ctypes.c_int32, ctypes.c_int32,
         ctypes.c_int32,
-        ctypes.c_int32_p, ctypes.c_int32_p,
-        ctypes.c_int32_p, ctypes.c_int32_p,
-        ctypes.c_int32_p, ctypes.c_int32_p,
-        ctypes.c_int64_p
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32),
+        ctypes.POINTER(ctypes.c_int64)
     )
     def getHistogram(wrapped, chanA, chanB, reset):
         raise NotImplementedError
