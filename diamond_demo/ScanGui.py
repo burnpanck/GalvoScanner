@@ -6,6 +6,7 @@ import traceback
 import importlib
 import os.path
 import abc
+import datetime
 
 # conditional module loading python 2/3
 try:
@@ -346,6 +347,24 @@ class ScanGui(tr.HasTraits):
         )
         s.startScan.grid(row=2, column=0)
 
+        s.dataDirVar = Tk.StringVar()
+        s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
+        s.dataDirEntry.grid(row=3, column=0)
+
+        s.selectDataDir = Tk.Button(
+            frame, text="Select",
+            command = cb(self.select_data_dir)
+        )
+        s.selectDataDir.grid(row=3, column=1)
+
+        s.saveData = Tk.Button(
+            frame, text="Save data",
+            command = cb(self.save_data)
+        )
+        s.saveData.grid(row=4, column=0)
+
+
+
         # add button to stop scanning
         s.stopScan = Tk.Button(
             frame, text="Stop Scan",
@@ -661,6 +680,47 @@ class ScanGui(tr.HasTraits):
         f = filedialog.askopenfile(initialdir="./configs", filetypes=[("ConfigFile", "*.cfg")])
         if f is not None:
             self.load_config(f.name)
+
+    def select_data_dir(self):
+        f = filedialog.askdirectory(
+            mustexist=True,
+            title="Select folder where data is saved to",
+        )
+        if f is not None:
+            self.dataDirVar.set(os.path.abspath(f))
+
+    def save_data(self):
+        now = datetime.datetime.now()
+        basepath = self.dataDirVar.get()
+        basefn = os.path.join(basepath,now.strftime('%Y%m%d-%H%M-'))
+
+        hbt = self.last_HBT
+        if hbt is not None:
+            bc = hbt.bin_centres.mag_in(pq.ns)
+            g2 = hbt.g2(normalise=self.normalise,correct=self.correct)
+
+            np.savetxt(
+                basefn + 'correlations.csv',
+                np.c_[bc,g2],
+                delimiter=', ',
+                header = (
+                    "Photon auto-correlations\n"
+                    + ("normalised to 1 at long delays\n" if self.normalise else "normalised using average count rate")
+                    + ("uncorrelated background subtracted\n" if self.correct else "")
+                    + "\ndelay [ns], g2 [unitless]"
+                ),
+            )
+
+        np.savetxt(
+            basefn + 'map.csv',
+            self.map.data.mag_in(pq.kHz),
+            delimiter = ', ',
+            header = (
+                "Scanning confocal microscope image, average photon count rate in [kHz]\n"
+                + "Spatial resolution %.2f / %.2f um"%tuple(self.map.step.mag_in(pq.um))
+            ),
+        )
+
 
     @tr.on_trait_change('_map_fig:button_press_event')
     def _map_clicked(self,event):
