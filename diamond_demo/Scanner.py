@@ -245,7 +245,7 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     def choose_point(self, point):
         self.mode = 'idle'
         self.position = point
-        self.mode = 'optimising'
+        self.mode = 'optimising' if self.auto_optimisation else 'on_target'
 
     def setup_hbt(self, reso, range):
         self._tdc.enable_HBT = True

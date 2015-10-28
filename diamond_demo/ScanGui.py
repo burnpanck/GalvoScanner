@@ -349,19 +349,19 @@ class ScanGui(tr.HasTraits):
 
         s.dataDirVar = Tk.StringVar()
         s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
-        s.dataDirEntry.grid(row=3, column=0)
+        s.dataDirEntry.grid(row=5, column=7)
 
         s.selectDataDir = Tk.Button(
             frame, text="Select",
-            command = cb(self.select_data_dir)
+            command = cb(lambda:self.select_data_dir(s.dataDirVar))
         )
-        s.selectDataDir.grid(row=3, column=1)
+        s.selectDataDir.grid(row=5, column=8)
 
         s.saveData = Tk.Button(
             frame, text="Save data",
-            command = cb(self.save_data)
+            command = cb(lambda:self.save_data(s.dataDirVar.get()))
         )
-        s.saveData.grid(row=4, column=0)
+        s.saveData.grid(row=6, column=7)
 
 
 
@@ -681,18 +681,17 @@ class ScanGui(tr.HasTraits):
         if f is not None:
             self.load_config(f.name)
 
-    def select_data_dir(self):
+    def select_data_dir(self,tkvar):
         f = filedialog.askdirectory(
             mustexist=True,
             title="Select folder where data is saved to",
         )
         if f is not None:
-            self.dataDirVar.set(os.path.abspath(f))
+            tkvar.set(os.path.abspath(f))
 
-    def save_data(self):
+    def save_data(self,basepath):
         now = datetime.datetime.now()
-        basepath = self.dataDirVar.get()
-        basefn = os.path.join(basepath,now.strftime('%Y%m%d-%H%M-'))
+        basefn = os.path.join(basepath,now.strftime('%Y%m%d-%H%M%S-'))
 
         hbt = self.last_HBT
         if hbt is not None:
