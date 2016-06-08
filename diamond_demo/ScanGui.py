@@ -212,6 +212,7 @@ class ScanGui(tr.HasTraits):
     position = tr.DelegatesTo('_s')
     signal_ratio = tr.DelegatesTo('_s')
     auto_optimisation = tr.DelegatesTo('_s')
+    hbt_force = tr.DelegatesTo('_s')
     autoscale = tr.Bool(True)
     normalise = tr.Bool(True)
     correct = tr.Bool(True)
@@ -427,6 +428,17 @@ class ScanGui(tr.HasTraits):
         s.hbtButton.grid(row=1, column=5)
         s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
         s.hbtUnRunButton.grid(row=1, column=7)
+
+        # force hbt
+        s.hbt_force_var = Tk.BooleanVar()
+        s.hbt_force = Tk.Checkbutton(
+            frame, text="Force HBT",
+            variable=s.hbt_force_var,
+            command=cb(lambda:self.trait_set(hbt_force=s.hbt_force_var.get()))
+        )
+        s.hbt_force.grid(row=4, column=7)
+
+
         # checkbox for correction of HBT
         s.correctionVar = Tk.BooleanVar()
         self.on_trait_change(

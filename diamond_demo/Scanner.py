@@ -101,6 +101,7 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     _optim_size = tr.Int(7)
     _last_hbt = tr.CFloat()
     mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
+    hbt_force = tr.Bool()
     _previous_mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
     _cur_map = tr.Instance(FluorescenceMap)
     _cur_idx = tr.Array(int,shape=(2,))
@@ -158,16 +159,20 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
 
     def _mode_changed(self,old,new):
         self._previous_mode = old
-        self._tdc.freeze = new != 'hbt'
+        self._tdc.freeze = (not self.hbt_force) and new != 'hbt'
         if new == 'optimising':
             map = self._fb_map_default()
             map.centre = self.position
             self._scan_map(map)
             self.fb_map = map
 
+    def _hbt_force_changed(self,new):
+        self._tdc.freeze = (not new) and self.mode != 'hbt'
+
     @tr.on_trait_change('_tdc:new_data')
     def _got_new_data(self, rates):
         from yde.lib.py2to3 import monotonic
+        now = monotonic()
         try:
             if self.mode in ['mapping','optimising']:
                 cm = self._cur_map
@@ -196,16 +201,18 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
                     tci = tuple(ci)
                     self.position = pq.asanyarray([cm.X[tci], cm.Y[tci]])
             elif self.mode in ['on_target', 'hbt']:
-                now = monotonic()
-                if self.mode == 'hbt':
-                    if self._last_hbt + 1 <= now:
-                        self.new_hbt = self._tdc.hbt
-                        self._last_hbt = now
                 if self.auto_optimisation and self._last_optim + self.optimisation_interval.mag_in(pq.s) <= now:
                     self.mode = 'optimising'
         except Exception:
             self.mode = 'idle'
             raise
+        try:
+            if self.hbt_force or  self.mode == 'hbt':
+                if self._last_hbt + 1 <= now:
+                    self.new_hbt = self._tdc.hbt
+                    self._last_hbt = now
+        except Exception as ex:
+            print(ex)
 
     def _process_optimisation(self, map):
         from yde.lib.py2to3 import monotonic
