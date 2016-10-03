@@ -104,7 +104,6 @@ class TkFigure(tr.HasTraits):
         if not self.update:
             return
         self.update(self)
-        self.ax.autoscale(None)
         self.canvas.draw()
 
 class TkVarLink(tr.ABCHasStrictTraits):
@@ -561,6 +560,12 @@ class ScanGui(tr.HasTraits):
         f.ax.set_ylim(*yr[::-1])
         self._map_fig = f
 
+    @tr.on_trait_change('map.extents')
+    def _update_map_coords(self):
+        if self.map is None or self._map_fig is None:
+            return
+        self._map_fig.request_update()
+
     def _create_feedback_plot(self, frame):
         f = TkFigure(
             frame,
@@ -790,5 +795,6 @@ class ScanGui(tr.HasTraits):
         img = fig.img
         img.set_data(data)
         img.set_clim(data.min(),data.max())
+        fig.ax.autoscale(None)
 
 
