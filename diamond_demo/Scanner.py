@@ -52,10 +52,12 @@ class FluorescenceMap(tr.HasStrictTraits):
 
     @tr.cached_property
     def _get_X(self):
+#        print('Get X',self.shape)
         return self.start[0] + np.tile(np.arange(self.shape[0]),(self.shape[1],1))*self.step[0]
 
     @tr.cached_property
     def _get_Y(self):
+#        print('Get Y',self.shape)
         return self.start[1] + np.tile(np.arange(self.shape[1]),(self.shape[0],1)).T*self.step[1]
 
     def _data_default(self):

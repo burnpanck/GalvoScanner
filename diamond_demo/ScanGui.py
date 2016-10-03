@@ -149,7 +149,7 @@ class TkVarLink(tr.ABCHasStrictTraits):
         self.var.set(self._fmt(new))
     
     def _update_trait(self, *args, **kw):
-        print('_update traits')
+#        print('_update traits')
         new = self._parse(self.var.get())
         print('update trait ',self.trait,args,kw,new)
         setattr(self.obj, self.trait, new)
@@ -302,11 +302,11 @@ class ScanGui(tr.HasTraits):
             lambda: s.focusEntry.event_generate('<<update>>', when='tail'),
             'focus',
         )
-        self.trait_property_changed('focus',self.focus)
         s.focusEntry.bind(
             "<<update>>",
-            lambda: s.focusVar.set(str(self.focus.mag_in(pq.V))),
+            lambda *args,**kw: s.focusVar.set(str(self.focus.mag_in(pq.V))),
         )
+        self.trait_property_changed('focus',self.focus)
         s.focus = Tk.Button(
             frame, text="Set Focus",
             command=cb(lambda: self.trait_set(focus=float(s.focusVar.get())*pq.V))
@@ -562,6 +562,7 @@ class ScanGui(tr.HasTraits):
 
     @tr.on_trait_change('map.extents')
     def _update_map_coords(self):
+#        print('update map coords',self.map and self.map.extents)
         if self.map is None or self._map_fig is None:
             return
         self._map_fig.request_update()
@@ -695,8 +696,10 @@ class ScanGui(tr.HasTraits):
 
     def open_config(self):
         f = filedialog.askopenfile(initialdir="./configs", filetypes=[("ConfigFile", "*.cfg")])
+        print('load config',f.name)
         if f is not None:
             self.load_config(f.name)
+            print('done load config')
 
     def select_data_dir(self,tkvar):
         f = filedialog.askdirectory(
@@ -743,7 +746,7 @@ class ScanGui(tr.HasTraits):
         if event.xdata is None or event.ydata is None:
             return
         pos = (event.xdata, event.ydata) * pq.um
-        print("Mouse clicked at ", pos)
+#        print("Mouse clicked at ", pos)
         self._s.choose_point(pos)
         # TODO: plot crosshair
 
@@ -752,6 +755,7 @@ class ScanGui(tr.HasTraits):
         if not self._map_fig:
             return
 #        slice, update = event
+ #       print('map updated')
         self._map_fig.request_update()
         
     @tr.on_trait_change('_s:fb_map.centre')
@@ -780,6 +784,8 @@ class ScanGui(tr.HasTraits):
         ax = fig.ax
         img.set_data(data)
         img.set_clim(data.min(),data.max())
+        img.set_extent(np.concatenate([x,y]))
+#        print('update map image ',x,y,img.get_extent())
         ax.set_xlim(*x)
         ax.set_ylim(*y[::-1])
         
