@@ -436,7 +436,7 @@ class ScanGui(tr.HasTraits):
             variable=s.hbt_force_var,
             command=cb(lambda:self.trait_set(hbt_force=s.hbt_force_var.get()))
         )
-        s.hbt_force.grid(row=4, column=7)
+        s.hbt_force.grid(row=6, column=8)
 
 
         # checkbox for correction of HBT

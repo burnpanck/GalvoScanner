@@ -4,7 +4,7 @@ import sys
 import os.path
 
 basedir = os.path.abspath(os.path.dirname(__file__))
-path = os.path.abspath(os.path.join(basedir,'..','..','github','ydecode','python'))
+path = os.path.abspath(os.path.join(basedir,'..','github','ydecode','python'))
 if path not in sys.path:
     sys.path.append(path)
 
