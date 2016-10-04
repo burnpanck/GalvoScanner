@@ -24,7 +24,7 @@ class Lens:
         return 1 / np.tan(np.arcsin(self.NA / self.n))
 
 
-class Positioning(tr.HasStrictTraits):
+class RealPositioning(tr.HasStrictTraits):
     """ Controls a two-axis galvo scanner for x/y positioning and a piezo for focus.
     """
     sensitivity = QuantityArrayTrait([0.5,0.5]*pq.V*180/np.pi,desc="galvo sensitivity V/rad (phi,theta)")
@@ -95,3 +95,16 @@ class Positioning(tr.HasStrictTraits):
         self._aout.WriteAnalogF64(1, False, -1, DAQmx.DAQmx_Val_GroupByChannel, V, None, None)
 
 
+class SimulatedPositioning(RealPositioning):
+    _aout = tr.Disallow()
+
+    def _release_tasks(self):
+        pass
+
+    def _galvo_voltage_changed(self, value):
+        pass
+
+    def _piezo_voltage_changed(self, value):
+        pass
+
+Positioning = RealPositioning if DAQmx is not None else SimulatedPositioning

@@ -8,21 +8,20 @@ import os.path
 import abc
 import datetime
 
-# conditional module loading python 2/3
-try:
-    import tkinter as Tk
-    import tkinter.messagebox as messagebox, tkinter.filedialog as filedialog
-except ImportError:
-    import Tkinter as Tk
-    import tkMessageBox as messagebox, tkFileDialog as filedialog
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QMessageBox,
+    QHBoxLayout, QVBoxLayout, QGridLayout,
+    QPushButton, QLineEdit, QLabel, QSlider,
+)
 
 import numpy as np
 import quantities as pq
 import traits.api as tr
 
-import matplotlib.axes
-import matplotlib.backends.backend_tkagg
 import matplotlib as mpl
+mpl.use('Qt5Agg')
+import matplotlib.axes
+import matplotlib.backends.backend_qt5agg
 
 from yde.lib.misc.basics import Struct
 from yde.lib.quantity_traits import QuantityArrayTrait
@@ -37,27 +36,26 @@ def catch2messagebox(fun):
         try:
             fun(*args,**kw)
         except Exception as ex:
-#            raise
-            messagebox.showerror(
-                "Exception: "+str(ex),
-                ''.join(traceback.format_exc())
+            # TODO: fix messagebox
+            ans = QMessageBox.critical(
+                None, 'Exception!',
+                traceback.format_exc(),
             )
             raise
     return wrapper
 
 def handle_traits_error(object, trait_name, old_value, new_value):
-    messagebox.showerror(
-        'TraitsError',
+    print(
         'Failed to set trait "%s" of %s object to %s (was %s):\n'%(
             trait_name, type(object).__name__, new_value, old_value
         )+''.join(traceback.format_exc())
-    )
+    ) # TODO: messagebox
     raise
 
-class TkFigure(tr.HasTraits):
+class QtFigure(tr.HasTraits):
     frame = tr.Any
     ax = tr.Instance(mpl.axes.Axes)
-    canvas = tr.Instance(mpl.backends.backend_tkagg.FigureCanvasTkAgg)
+    canvas = tr.Instance(mpl.backends.backend_qt5agg.FigureCanvasQTAgg)
     update = tr.Callable
 
     button_press_event = tr.Event
@@ -73,7 +71,7 @@ class TkFigure(tr.HasTraits):
                 
         f = mpl.figure.Figure(**fig)
         ax = f.add_axes([left,bottom,1-left-right,1-bottom-top],**ax)
-
+        return
         frame = Tk.Frame(parent)
         if grid is not None:
             frame.grid(**grid)
@@ -106,7 +104,7 @@ class TkFigure(tr.HasTraits):
         self.update(self)
         self.canvas.draw()
 
-class TkVarLink(tr.ABCHasStrictTraits):
+class QtVarLink(tr.ABCHasStrictTraits):
     obj = tr.Instance(tr.HasTraits)
     trait = tr.Str
     var = tr.Any
@@ -163,9 +161,7 @@ class TkVarLink(tr.ABCHasStrictTraits):
     @abc.abstractmethod
     def _parse(self, val): pass
 
-class TkBoolLk(TkVarLink):
-    var = tr.Instance(Tk.BooleanVar, ())
-   
+class QtBoolLk(QtVarLink):
     def _make_ui(self,parent,**ui):
         self.ui = Tk.Checkbutton(parent,variable=self.var,**ui)
     def _fmt(self, val):
@@ -173,9 +169,8 @@ class TkBoolLk(TkVarLink):
     def _parse(self, val):
         return val
             
-class TkFloatLk(TkVarLink):
+class QtFloatLk(QtVarLink):
     fmt = tr.Str('%.3f')
-    var = tr.Instance(Tk.StringVar, ())
 
     def _make_ui(self,parent,**ui):
         self.ui = Tk.Entry(parent,textvariable=self.var,**ui)
@@ -184,7 +179,7 @@ class TkFloatLk(TkVarLink):
     def _parse(self, val):
         return float(val)
         
-class TkQuantityLk(TkFloatLk):
+class QtQuantityLk(QtFloatLk):
     unit = tr.Any
     
     def _fmt(self, val):
@@ -199,12 +194,12 @@ class TkQuantityLk(TkFloatLk):
         
 class ScanGui(tr.HasTraits):
     _s = tr.Instance(ScanningRFMeasurement)
-    _frame = tr.Instance(Tk.Frame)
+    _frame = tr.Instance(QWidget)
     _tk_objects = tr.Dict(tr.Str,tr.Any)
-    _map_fig = tr.Instance(TkFigure)
-    _fb_map_fig = tr.Instance(TkFigure)
-    _rate_fig = tr.Instance(TkFigure)
-    _HBT_fig = tr.Instance(TkFigure)
+    _map_fig = tr.Instance(QtFigure)
+    _fb_map_fig = tr.Instance(QtFigure)
+    _rate_fig = tr.Instance(QtFigure)
+    _HBT_fig = tr.Instance(QtFigure)
 
     focus = tr.DelegatesTo('_s')
     mode = tr.DelegatesTo('_s')
@@ -232,12 +227,17 @@ class ScanGui(tr.HasTraits):
                 reraise_exceptions=False,
                 main=True
             )
-            master = Tk.Tk()
-            self = cls(master, **kw)
-            master.mainloop()
+            print('A')
+            app = QApplication([])
+            print('B')
+            self = cls(**kw)
+            print('C')
+            ec = app.exec_()
+            print('D',ec)
             self.deinit()
         finally:
             tr.pop_exception_handler()
+        return ec
 
     def deinit(self):
         self._s.deinit()
@@ -269,7 +269,7 @@ class ScanGui(tr.HasTraits):
             self._handle_cfg(obj, cfg.pop(key, {}))
         return cfg
 
-    def __init__(self, master, config_file=None, **kw):
+    def __init__(self, config_file=None, **kw):
         scanner_kw = dict()
         for k in ''.split():
             v = kw.pop(k,None)
@@ -279,255 +279,263 @@ class ScanGui(tr.HasTraits):
         self._s = ScanningRFMeasurement(**scanner_kw)
         if config_file is not None:
             self.load_config(config_file)
-        self._create_frame(master)
+        self._create_frame()
         self._s._tdc.reset()
 
 
-    def _create_frame(self, master):
+    def _create_frame(self):
 
         # add our gui to the master Widget
-        frame = Tk.Frame(master)
-        frame.pack()
+        wnd = QMainWindow()
+        wnd.statusBar()
+
+        widget = QWidget()
+        wnd.setCentralWidget(widget)
+        widget.setWindowTitle('ConfocalScan')
 
         s = Struct()
         cb = catch2messagebox
 
+        grid = QGridLayout(widget)
+
         # we need one slider for focus
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
-        s.focusVar = Tk.StringVar()
-        s.focusEntry = Tk.Entry(frame, textvariable=s.focusVar)
-        s.focusEntry.grid(row=0, column=0)
+        s.focus = QLineEdit()
+        grid.addWidget(s.focus,0,0)
         self.on_trait_change(
-            lambda: s.focusEntry.event_generate('<<update>>', when='tail'),
+            lambda v: s.focus.setText('%.2f'%v.mag_in(pq.V)),
             'focus',
         )
-        s.focusEntry.bind(
-            "<<update>>",
-            lambda *args,**kw: s.focusVar.set(str(self.focus.mag_in(pq.V))),
+        s.focus.textChanged[str].connect(
+            lambda v: self.trait_set(focus=float(v)*pq.V),
         )
-        self.trait_property_changed('focus',self.focus)
-        s.focus = Tk.Button(
-            frame, text="Set Focus",
-            command=cb(lambda: self.trait_set(focus=float(s.focusVar.get())*pq.V))
+#        self.trait_property_changed('focus',self.focus)
+
+        s.focusSet = QPushButton()
+        grid.addWidget(s.focusSet,0,1)
+        s.focusSet.setText("Set Focus")
+        s.focusSet.clicked[bool].connect(
+            lambda: self.trait_set(focus=float(s.focus.getText())*pq.V)
         )
-        s.focus.grid(row=0, column=1)
 
         # reconnectQuTau
         def reconnect():
             print('reconnect pressed!')
             self._s._tdc.reset()
-        s.rcQuTau = Tk.Button(
-            frame, text="Reconnect QuTau",
-            command=cb(reconnect)
-        )
-        s.rcQuTau.grid(row=1, column=1)
+        s.rcQuTau = QPushButton()
+        grid.addWidget(s.rcQuTau,1,1)
+        s.rcQuTau.setText("Reconnect QuTau")
+        s.rcQuTau.clicked[bool].connect(reconnect)
+
         # self.scale = Scale(frame,from_=0, to=5, resolution=0.001, orient=HORIZONTAL, command=self.ValueChanged)
         # self.scale.grid(row=0,column=1)
         # a checkbox for switching autoscale off or on
-        s.autoscaleVar = Tk.BooleanVar()
-        s.autoscale = Tk.Checkbutton(
-            frame, text="Autoscale",
-            variable=s.autoscaleVar,
-            command=cb(lambda:self.trait_set(autoscale=s.autoscaleVar.get()))
-        )
-        s.autoscale.select()
-        s.autoscale.grid(row=3, column=5)
-        # add a button to loadConfig
-        s.openConfig = Tk.Button(
-            frame, text="Open Config File",
-            command = cb(self.open_config)
-        )
-        s.openConfig.grid(row=1, column=0)
+        if False:
+            s.autoscaleVar = Tk.BooleanVar()
+            s.autoscale = Tk.Checkbutton(
+                frame, text="Autoscale",
+                variable=s.autoscaleVar,
+                command=cb(lambda:self.trait_set(autoscale=s.autoscaleVar.get()))
+            )
+            s.autoscale.select()
+            s.autoscale.grid(row=3, column=5)
+            # add a button to loadConfig
+            s.openConfig = Tk.Button(
+                frame, text="Open Config File",
+                command = cb(self.open_config)
+            )
+            s.openConfig.grid(row=1, column=0)
 
-        # add a button to start the scanning
-        s.startScan = Tk.Button(
-            frame, text="Start Scan",
-            command=cb(lambda: self._s.scan(self.map))
-        )
-        s.startScan.grid(row=2, column=0)
+            # add a button to start the scanning
+            s.startScan = Tk.Button(
+                frame, text="Start Scan",
+                command=cb(lambda: self._s.scan(self.map))
+            )
+            s.startScan.grid(row=2, column=0)
 
-        s.dataDirVar = Tk.StringVar()
-        s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
-        s.dataDirEntry.grid(row=5, column=7)
+            s.dataDirVar = Tk.StringVar()
+            s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
+            s.dataDirEntry.grid(row=5, column=7)
 
-        s.selectDataDir = Tk.Button(
-            frame, text="Select",
-            command = cb(lambda:self.select_data_dir(s.dataDirVar))
-        )
-        s.selectDataDir.grid(row=5, column=8)
+            s.selectDataDir = Tk.Button(
+                frame, text="Select",
+                command = cb(lambda:self.select_data_dir(s.dataDirVar))
+            )
+            s.selectDataDir.grid(row=5, column=8)
 
-        s.saveData = Tk.Button(
-            frame, text="Save data",
-            command = cb(lambda:self.save_data(s.dataDirVar.get()))
-        )
-        s.saveData.grid(row=6, column=7)
-
-
-
-        # add button to stop scanning
-        s.stopScan = Tk.Button(
-            frame, text="Stop Scan",
-            command = cb(self._s.stop)
-        )
-        s.stopScan.grid(row=2, column=1)
-
-        # button for resetting position
-        s.resetPos = Tk.Button(
-            frame, text="Goto 0/0",
-            command=cb(lambda:self._s.trait_set(position=(0,0)*pq.um)),
-        )
-        s.resetPos.grid(row=3, column=4)
-
-        # Xslider
-        s.xVar = Tk.StringVar()
-        self.on_trait_change(
-            lambda pos: s.xVar.set(str(pos[0].mag_in(pq.um))),
-            'position'
-        )
-        s.yVar = Tk.StringVar()
-        self.on_trait_change(
-            lambda pos: s.yVar.set(str(pos[1].mag_in(pq.um))),
-            'position'
-        )
-        self.trait_property_changed('position',self.position)
-        s.xEntry = Tk.Entry(frame, textvariable=s.xVar)
-        s.xEntry.grid(row=0, column=5)
-        s.yEntry = Tk.Entry(frame, textvariable=s.yVar)
-        s.yEntry.grid(row=0, column=6)
-        s.setPos = Tk.Button(
-            frame, text="Set Position",
-            command=cb(lambda: self.trait_set(position=np.r_[
-                float(s.xVar.get()),
-                float(s.yVar.get()),
-            ]*pq.um))
-        )
-        s.setPos.grid(row=0, column=7)
-        
-        # position correcture
-        s.poscorrVar = Tk.StringVar()
-        self.on_trait_change(
-            lambda mode: s.poscorrVar.set(mode),
-            '_s.position_offset'
-        )
-        self._s.trait_property_changed('position_offset',self._s.position_offset)
-        s.poscorrLbl = Tk.Label(frame, textvariable=s.poscorrVar)
-        s.poscorrLbl.grid(row=1, column=6)
-
-        s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
-        s.angleButton.grid(row=1, column=8)
-        # button for showing hbt
-        s.hbtButton = Tk.Button(
-            frame, text="Reset HBT",
-            command=cb(lambda:self.reset_hbt(
-                float(s.binWidth.get())*pq.ns,
-                float(s.binCount.get())*pq.ns,
-            )),
-        )
-        s.hbtButton.grid(row=1, column=5)
-        s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
-        s.hbtUnRunButton.grid(row=1, column=7)
-
-        # force hbt
-        s.hbt_force_var = Tk.BooleanVar()
-        s.hbt_force = Tk.Checkbutton(
-            frame, text="Force HBT",
-            variable=s.hbt_force_var,
-            command=cb(lambda:self.trait_set(hbt_force=s.hbt_force_var.get()))
-        )
-        s.hbt_force.grid(row=6, column=8)
+            s.saveData = Tk.Button(
+                frame, text="Save data",
+                command = cb(lambda:self.save_data(s.dataDirVar.get()))
+            )
+            s.saveData.grid(row=6, column=7)
 
 
-        # checkbox for correction of HBT
-        s.correctionVar = Tk.BooleanVar()
-        self.on_trait_change(
-            lambda n: s.correctionVar.set(n),
-            'correct'
-        )        
-        self.trait_property_changed('correct',self.correct)
-        s.correctionCheck = Tk.Checkbutton(
-            frame, text="correction", variable=s.correctionVar,
-            command=cb(lambda:self.trait_set(correct=s.correctionVar.get())),
-        )
-        s.correctionCheck.grid(row=3, column=6)
-        s.bgrateVar = TkVarLink.make(
-            frame,
-            self, 'signal_ratio',
-            row=3,column=7,
-            fmt = '%.3f',
-        )
 
-        # autocorrection
-        s.autocorrVar = Tk.BooleanVar()
-        self._s.on_trait_change(
-            lambda n: s.autocorrVar.set(n),
-            'auto_correction'
-        )        
-        self._s.trait_property_changed('auto_correction',self._s.auto_correction)
-        s.autocorrCheck = Tk.Checkbutton(
-            frame, text="autocorrection", variable=s.autocorrVar,
-            command=cb(lambda:self._s.trait_set(auto_correction=s.autocorrVar.get())),
-        )
-        s.autocorrCheck.grid(row=2, column=8)
-        # checkbox for normalization
-        s.normVar = Tk.BooleanVar()
-        self.on_trait_change(
-            lambda n: s.normVar.set(n),
-            'normalise'
-        )
-        self.trait_property_changed('normalise',self.normalise)
-        s.normCheck = Tk.Checkbutton(
-            frame, text="Normalization", variable=s.normVar,
-            command=cb(lambda:self.trait_set(normalise=s.normVar.get())),
-        )
-        s.normCheck.grid(row=3, column=8)
+            # add button to stop scanning
+            s.stopScan = Tk.Button(
+                frame, text="Stop Scan",
+                command = cb(self._s.stop)
+            )
+            s.stopScan.grid(row=2, column=1)
 
-        # checkbox for automatical maximum feedback
-        s.autofeedbackVar = Tk.BooleanVar()
-        self.on_trait_change(
-            lambda n: s.autofeedbackVar.set(n),
-            'auto_optimisation'
-        )
-        self.trait_property_changed('auto_optimisation',self.auto_optimisation)
-        s.autofeedbackCheck = Tk.Checkbutton(
-            frame, text="Auto feedback", variable=s.autofeedbackVar,
-            command=cb(lambda:self._s.trait_set(auto_optimisation=s.autofeedbackVar.get())),
-        )
-        s.autofeedbackCheck.grid(row=4, column=8)
+            # button for resetting position
+            s.resetPos = Tk.Button(
+                frame, text="Goto 0/0",
+                command=cb(lambda:self._s.trait_set(position=(0,0)*pq.um)),
+            )
+            s.resetPos.grid(row=3, column=4)
 
-        # scanner mode
-        s.modeVar = Tk.StringVar()
-        self.on_trait_change(
-            lambda mode: s.modeVar.set(mode),
-            'mode'
-        )
-        self.trait_property_changed('mode',self.mode)
-        s.modeLbl = Tk.Label(frame, textvariable=s.modeVar)
-        s.modeLbl.grid(row=4, column=7)
-        
-        # entry fields for binWidth and binCount
-        s.binWidth = Tk.StringVar()
-        s.binCount = Tk.StringVar()
-        s.widthlabel = Tk.Label(frame, text="Time Resolution")
-        s.countLabel = Tk.Label(frame, text="range")
-        s.widthEntry = Tk.Entry(frame, textvariable=s.binWidth)
-        s.countEntry = Tk.Entry(frame, textvariable=s.binCount)
-        s.binCount.set("100")
-        s.binWidth.set("1")
-        s.widthlabel.grid(row=0, column=3)
-        s.widthEntry.grid(row=0, column=4)
-        s.countLabel.grid(row=1, column=3)
-        s.countEntry.grid(row=1, column=4)
+            # Xslider
+            s.xVar = Tk.StringVar()
+            self.on_trait_change(
+                lambda pos: s.xVar.set(str(pos[0].mag_in(pq.um))),
+                'position'
+            )
+            s.yVar = Tk.StringVar()
+            self.on_trait_change(
+                lambda pos: s.yVar.set(str(pos[1].mag_in(pq.um))),
+                'position'
+            )
+            self.trait_property_changed('position',self.position)
+            s.xEntry = Tk.Entry(frame, textvariable=s.xVar)
+            s.xEntry.grid(row=0, column=5)
+            s.yEntry = Tk.Entry(frame, textvariable=s.yVar)
+            s.yEntry.grid(row=0, column=6)
+            s.setPos = Tk.Button(
+                frame, text="Set Position",
+                command=cb(lambda: self.trait_set(position=np.r_[
+                    float(s.xVar.get()),
+                    float(s.yVar.get()),
+                ]*pq.um))
+            )
+            s.setPos.grid(row=0, column=7)
 
-        
-        self._create_scan_plot(frame)
-        self._create_feedback_plot(frame)
-        self._create_rate_plot(frame)
-        self._create_HBT_plot(frame)
+            # position correcture
+            s.poscorrVar = Tk.StringVar()
+            self.on_trait_change(
+                lambda mode: s.poscorrVar.set(mode),
+                '_s.position_offset'
+            )
+            self._s.trait_property_changed('position_offset',self._s.position_offset)
+            s.poscorrLbl = Tk.Label(frame, textvariable=s.poscorrVar)
+            s.poscorrLbl.grid(row=1, column=6)
 
-        frame.config()
+            s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
+            s.angleButton.grid(row=1, column=8)
+            # button for showing hbt
+            s.hbtButton = Tk.Button(
+                frame, text="Reset HBT",
+                command=cb(lambda:self.reset_hbt(
+                    float(s.binWidth.get())*pq.ns,
+                    float(s.binCount.get())*pq.ns,
+                )),
+            )
+            s.hbtButton.grid(row=1, column=5)
+            s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
+            s.hbtUnRunButton.grid(row=1, column=7)
 
-        self._frame = frame
+            # force hbt
+            s.hbt_force_var = Tk.BooleanVar()
+            s.hbt_force = Tk.Checkbutton(
+                frame, text="Force HBT",
+                variable=s.hbt_force_var,
+                command=cb(lambda:self.trait_set(hbt_force=s.hbt_force_var.get()))
+            )
+            s.hbt_force.grid(row=6, column=8)
+
+
+            # checkbox for correction of HBT
+            s.correctionVar = Tk.BooleanVar()
+            self.on_trait_change(
+                lambda n: s.correctionVar.set(n),
+                'correct'
+            )
+            self.trait_property_changed('correct',self.correct)
+            s.correctionCheck = Tk.Checkbutton(
+                frame, text="correction", variable=s.correctionVar,
+                command=cb(lambda:self.trait_set(correct=s.correctionVar.get())),
+            )
+            s.correctionCheck.grid(row=3, column=6)
+            s.bgrateVar = TkVarLink.make(
+                frame,
+                self, 'signal_ratio',
+                row=3,column=7,
+                fmt = '%.3f',
+            )
+
+            # autocorrection
+            s.autocorrVar = Tk.BooleanVar()
+            self._s.on_trait_change(
+                lambda n: s.autocorrVar.set(n),
+                'auto_correction'
+            )
+            self._s.trait_property_changed('auto_correction',self._s.auto_correction)
+            s.autocorrCheck = Tk.Checkbutton(
+                frame, text="autocorrection", variable=s.autocorrVar,
+                command=cb(lambda:self._s.trait_set(auto_correction=s.autocorrVar.get())),
+            )
+            s.autocorrCheck.grid(row=2, column=8)
+            # checkbox for normalization
+            s.normVar = Tk.BooleanVar()
+            self.on_trait_change(
+                lambda n: s.normVar.set(n),
+                'normalise'
+            )
+            self.trait_property_changed('normalise',self.normalise)
+            s.normCheck = Tk.Checkbutton(
+                frame, text="Normalization", variable=s.normVar,
+                command=cb(lambda:self.trait_set(normalise=s.normVar.get())),
+            )
+            s.normCheck.grid(row=3, column=8)
+
+            # checkbox for automatical maximum feedback
+            s.autofeedbackVar = Tk.BooleanVar()
+            self.on_trait_change(
+                lambda n: s.autofeedbackVar.set(n),
+                'auto_optimisation'
+            )
+            self.trait_property_changed('auto_optimisation',self.auto_optimisation)
+            s.autofeedbackCheck = Tk.Checkbutton(
+                frame, text="Auto feedback", variable=s.autofeedbackVar,
+                command=cb(lambda:self._s.trait_set(auto_optimisation=s.autofeedbackVar.get())),
+            )
+            s.autofeedbackCheck.grid(row=4, column=8)
+
+            # scanner mode
+            s.modeVar = Tk.StringVar()
+            self.on_trait_change(
+                lambda mode: s.modeVar.set(mode),
+                'mode'
+            )
+            self.trait_property_changed('mode',self.mode)
+            s.modeLbl = Tk.Label(frame, textvariable=s.modeVar)
+            s.modeLbl.grid(row=4, column=7)
+
+            # entry fields for binWidth and binCount
+            s.binWidth = Tk.StringVar()
+            s.binCount = Tk.StringVar()
+            s.widthlabel = Tk.Label(frame, text="Time Resolution")
+            s.countLabel = Tk.Label(frame, text="range")
+            s.widthEntry = Tk.Entry(frame, textvariable=s.binWidth)
+            s.countEntry = Tk.Entry(frame, textvariable=s.binCount)
+            s.binCount.set("100")
+            s.binWidth.set("1")
+            s.widthlabel.grid(row=0, column=3)
+            s.widthEntry.grid(row=0, column=4)
+            s.countLabel.grid(row=1, column=3)
+            s.countEntry.grid(row=1, column=4)
+
+
+            self._create_scan_plot(frame)
+            self._create_feedback_plot(frame)
+            self._create_rate_plot(frame)
+            self._create_HBT_plot(frame)
+
+            frame.config()
+
+        self._frame = wnd
+        wnd.show()
 
 
     def _create_scan_plot(self, frame):

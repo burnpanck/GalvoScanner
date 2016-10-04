@@ -12,6 +12,7 @@ from yde.lib.quantity_traits import QuantityArrayTrait, QuantityTrait
 from yde.lib.threading import RepeatingTaskRunner
 from ..hw import qutau
 
+
 class HBTResult(tr.HasStrictTraits):
     start_delay = QuantityTrait(pq.ns)
     bin_size = QuantityTrait(pq.ns)
@@ -37,7 +38,7 @@ class HBTResult(tr.HasStrictTraits):
     def _get_bin_centres(self):
         return self.start_delay + np.arange(self.raw_result.size)*self.bin_size
         
-class TDC(RepeatingTaskRunner):
+class RealTDC(RepeatingTaskRunner):
     exposure_time = QuantityTrait(100*pq.ms)
     _timebase = tr.Property(
         QuantityTrait(pq.s)
@@ -62,7 +63,7 @@ class TDC(RepeatingTaskRunner):
     )
 
     def __init__(self, **kw):
-        super(TDC,self).__init__(**kw)
+        super(RealTDC,self).__init__(**kw)
         self.reset()
 
     @tr.cached_property
@@ -177,3 +178,71 @@ class TDC(RepeatingTaskRunner):
             signal_ratio = self.signal_ratio,
         )
 
+
+class SimulatedTDC(RealTDC):
+    _timebase = tr.Disallow
+    _channels = tr.Disallow
+
+    _hbt_fun = tr.Disallow
+
+    rate = QuantityTrait(100*pq.kHz)
+    _hbt_setup = tr.Any()
+
+    def __init__(self, **kw):
+        super(SimulatedTDC, self).__init__(**kw)
+        self.reset()
+
+    def one_pass(self, dt):
+        from yde.lib.py2to3 import monotonic
+        now = monotonic()
+        lr = self._last_read
+        if now>=lr+self.exposure_time.mag_in(pq.s):
+            self._last_read = now
+            lam = pq.unitless(self.exposure_time*self.rate)
+            self.new_data = np.random.poisson(lam,size=(2,)) / self.exposure_time
+
+        self.require_update_by(max(
+            now + self._min_wait,
+            self._last_read + self.exposure_time.mag_in(pq.s) * 0.9
+        ))
+
+    #        print('photon counts ',buf[self._channels],nupd,dt,now-lr,now-self._last_read,self._next_pass-now)
+
+    def _exposure_time_changed(self, value):
+        pass
+
+    def _enable_HBT_changed(self, value):
+        pass
+
+    def _freeze_changed(self, value):
+        pass
+
+    def startup(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def reset(self):
+        self.stop()
+        self.start()
+
+    def deinit(self):
+        self.stop()
+
+    def setup_hbt(self, reso, range):
+        n = int(np.round(pq.unitless(range/reso)))
+        self._hbt_setup = reso,n
+
+    @property
+    def hbt(self):
+        reso,n = self._hbt_setup
+        return HBTResult(
+            bin_size = reso,
+            start_delay = -n * reso,
+            raw_result = np.zeros(2*n+1,int),
+            integration_time = 1 * pq.s,
+            signal_ratio = self.signal_ratio,
+        )
+
+TDC = RealTDC if qutau.tdclib is not None else SimulatedTDC

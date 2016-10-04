@@ -8,7 +8,7 @@ path = os.path.abspath(os.path.join(basedir,'..','github','ydecode','python'))
 if path not in sys.path:
     sys.path.append(path)
 
-from diamond_demo.ScanGui import ScanGui
+from diamond_demo.ScanGuiQt import ScanGui
 
 
 if __name__ == '__main__':
