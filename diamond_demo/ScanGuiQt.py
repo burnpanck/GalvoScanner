@@ -425,7 +425,7 @@ class ScanGui(tr.HasTraits):
 
         s.bgrateVar = QtTraitLink.make(grid,self,'signal_ratio',row=3,column=7)
 
-        s.rcQuTau = make_button("Reconnect QuPsi",1,1,self._s._tdc.reset)
+        s.rcQuTau = make_button("Reconnect quPSI",1,1,self._s._tdc.reset)
 
         s.openConfig = make_button(
             "Open Config File", 1, 0,
@@ -458,24 +458,11 @@ class ScanGui(tr.HasTraits):
 
         s.hbtStop = make_button("Stop HBT",1,7,self.stop_hbt)
 
+        s.saveDir = QtStrLk.make(grid,self,'save_dir',row=5,column=7)
+        s.selectDataDir = make_button("Select folder",5,8,self.select_data_dir)
+        s.saveData = make_button("Save data",6,7,self.save_data)
 
         if False:
-            s.dataDirVar = Tk.StringVar()
-            s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
-            s.dataDirEntry.grid(row=5, column=7)
-
-            s.selectDataDir = Tk.Button(
-                frame, text="Select",
-                command = cb(lambda:self.select_data_dir(s.dataDirVar))
-            )
-            s.selectDataDir.grid(row=5, column=8)
-
-            s.saveData = Tk.Button(
-                frame, text="Save data",
-                command = cb(lambda:self.save_data(s.dataDirVar.get()))
-            )
-            s.saveData.grid(row=6, column=7)
-
             # Xslider
             s.xVar = Tk.StringVar()
             self.on_trait_change(
@@ -513,26 +500,6 @@ class ScanGui(tr.HasTraits):
 
             s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
             s.angleButton.grid(row=1, column=8)
-
-            # force hbt
-            s.hbt_force_var = Tk.BooleanVar()
-            s.hbt_force = Tk.Checkbutton(
-                frame, text="Force HBT",
-                variable=s.hbt_force_var,
-                command=cb(lambda:self.trait_set(hbt_force=s.hbt_force_var.get()))
-            )
-            s.hbt_force.grid(row=6, column=8)
-
-
-            # scanner mode
-            s.modeVar = Tk.StringVar()
-            self.on_trait_change(
-                lambda mode: s.modeVar.set(mode),
-                'mode'
-            )
-            self.trait_property_changed('mode',self.mode)
-            s.modeLbl = Tk.Label(frame, textvariable=s.modeVar)
-            s.modeLbl.grid(row=4, column=7)
 
             # entry fields for binWidth and binCount
             s.binWidth = Tk.StringVar()
