@@ -8,10 +8,13 @@ import os.path
 import abc
 import datetime
 
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QMessageBox,
     QHBoxLayout, QVBoxLayout, QGridLayout,
-    QPushButton, QLineEdit, QLabel, QSlider,
+    QPushButton, QCheckBox, QLineEdit, QLabel, QSlider,
+
+    QSizePolicy,
 )
 
 import numpy as np
@@ -52,11 +55,14 @@ def handle_traits_error(object, trait_name, old_value, new_value):
     ) # TODO: messagebox
     raise
 
+class Signal(QObject):
+    signal = pyqtSignal()
+
 class QtFigure(tr.HasTraits):
-    frame = tr.Any
     ax = tr.Instance(mpl.axes.Axes)
     canvas = tr.Instance(mpl.backends.backend_qt5agg.FigureCanvasQTAgg)
     update = tr.Callable
+    _notifier = tr.Instance(Signal)
 
     button_press_event = tr.Event
     
@@ -71,109 +77,128 @@ class QtFigure(tr.HasTraits):
                 
         f = mpl.figure.Figure(**fig)
         ax = f.add_axes([left,bottom,1-left-right,1-bottom-top],**ax)
-        return
-        frame = Tk.Frame(parent)
-        if grid is not None:
-            frame.grid(**grid)
+        canvas = mpl.backends.backend_qt5agg.FigureCanvasQTAgg(f)
+        if grid is None:
+            canvas.setParent(parent)
+        else:
+            parent.addWidget(canvas,grid['row'],grid['column'],grid['rowspan'],grid['columnspan'])
+        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        canvas = mpl.backends.backend_tkagg.FigureCanvasTkAgg(f, master=frame)
-        canvas.show()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(side=Tk.BOTTOM, fill=Tk.BOTH, expand=True)
+        canvas.updateGeometry()
+
+
         def connect(e,canvas,obj):
             canvas.mpl_connect(e, lambda v: setattr(obj,e,v))
         for e in 'button_press_event'.split():
             connect(e,canvas,self)
 
+        sig = Signal()
+        sig.signal.connect(self._do_update)
         kw.update(
-            frame = frame,
             ax = ax,
             canvas = canvas,
+            _notifier = sig,
         )
          
-        super(TkFigure, self).__init__(**kw)
+        super(QtFigure, self).__init__(**kw)
 
-        frame.bind('<<reqest_update>>',self._do_update)
-        
     def request_update(self):
-        self.frame.event_generate('<<reqest_update>>',when='tail')
-       
-    def _do_update(self, event):
+        self._notifier.emit()
+
+    @pyqtSlot()
+    def _do_update(self):
         if not self.update:
             return
         self.update(self)
         self.canvas.draw()
 
-class QtVarLink(tr.ABCHasStrictTraits):
+class QtTraitLink(tr.ABCHasStrictTraits):
     obj = tr.Instance(tr.HasTraits)
     trait = tr.Str
-    var = tr.Any
     ui = tr.Any
     auto_update = tr.Bool(True)
-    
+    _notifier = tr.Instance(Signal)
+
+    ui_changed = tr.Event(desc="emitted when the UI changes, which might not yet have been reflected on the trait")
+
     @classmethod
     def make(cls,parent,obj,trait,*,row=None,column=None,**kw):
-        t = trait_type(obj, trait)
-        if isinstance(t, tr.Bool):
-            cls = TkBoolLk
-        elif isinstance(t, QuantityArrayTrait):
-            cls = TkQuantityLk
-        else:
-            cls = TkFloatLk
+        if cls is QtTraitLink:
+            # determine subclass from type
+            t = trait_type(obj, trait)
+            if isinstance(t, tr.Bool):
+                cls = QtBoolLk
+            elif isinstance(t, QuantityArrayTrait):
+                cls = QtQuantityLk
+            else:
+                cls = QtFloatLk
         traits = dict()
         for k in cls.class_editable_traits():
             if k in kw:
                 traits[k] = kw.pop(k)
-        ret = cls(obj=obj,trait=trait,**traits)
-        ret._make_ui(parent,**kw)
+        sig = Signal()
+        ret = cls(obj=obj,trait=trait,_notifier=sig,**traits)
+        ret._make_ui(**kw)
+        if row is None or column is None:
+            ret.ui.setParent(parent)
+        else:
+            parent.addWidget(ret.ui,row,column)
         obj.on_trait_change(
             ret._request_update,
             ret.trait
         )
-        ret.ui.bind('<<update_value>>',ret._update_tk)
-        if ret.auto_update and False:
-            ret.var.trace('w', ret._update_trait)
-        ret.ui.grid(row=row,column=column)
-        ret._request_update()
+        sig.signal.connect(ret._do_update)
+        ret._set(getattr(obj,trait))
         return ret
     
      
     def _request_update(self):
-        self.ui.event_generate('<<update_value>>',when='tail')
+        self._notifier.emit()
      
-    def _update_tk(self, event):
+    @pyqtSlot()
+    def _do_update(self):
         new = getattr(self.obj, self.trait)
-        print('update tk ',self.trait,event,new)
-        self.var.set(self._fmt(new))
+        print('update gui ',self.trait,new)
+        self._set(new)
     
     def _update_trait(self, *args, **kw):
+        new = self._get()
+        self.ui_changed = new
+        if not self.auto_update:
+            return
 #        print('_update traits')
-        new = self._parse(self.var.get())
         print('update trait ',self.trait,args,kw,new)
         setattr(self.obj, self.trait, new)
 
     @abc.abstractmethod
-    def _make_ui(self,parent,**ui): pass
+    def _make_ui(self,**ui): pass
     
     @abc.abstractmethod
-    def _fmt(self, val): pass
+    def _set(self, val): pass
     
     @abc.abstractmethod
-    def _parse(self, val): pass
+    def _get(self): pass
 
-class QtBoolLk(QtVarLink):
-    def _make_ui(self,parent,**ui):
-        self.ui = Tk.Checkbutton(parent,variable=self.var,**ui)
-    def _fmt(self, val):
-        return val
-    def _parse(self, val):
-        return val
+class QtBoolLk(QtTraitLink):
+    def _make_ui(self,**ui):
+        self.ui = QCheckBox(**ui)
+        self.ui.stateChanged.connect(self._update_trait)
+    def _set(self, val):
+        self.ui.setChecked(val)
+    def _get(self):
+        return self.ui.isChecked()
             
-class QtFloatLk(QtVarLink):
+class QtFloatLk(QtTraitLink):
     fmt = tr.Str('%.3f')
 
-    def _make_ui(self,parent,**ui):
-        self.ui = Tk.Entry(parent,textvariable=self.var,**ui)
+    def _make_ui(self,**ui):
+        self.ui = QLineEdit(**ui)
+        self.ui.textChanged.connect(self._update_trait)
+
+    def _set(self, val):
+        self.ui.setText(self._fmt(val))
+    def _get(self):
+        return self._parse(self.ui.getText())
     def _fmt(self, val):
         return self.fmt%val
     def _parse(self, val):
@@ -301,22 +326,13 @@ class ScanGui(tr.HasTraits):
         # we need one slider for focus
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
-        s.focus = QLineEdit()
-        grid.addWidget(s.focus,0,0)
-        self.on_trait_change(
-            lambda v: s.focus.setText('%.2f'%v.mag_in(pq.V)),
-            'focus',
-        )
-        s.focus.textChanged[str].connect(
-            lambda v: self.trait_set(focus=float(v)*pq.V),
-        )
-#        self.trait_property_changed('focus',self.focus)
+        s.focus = QtTraitLink.make(grid, self, 'focus', unit=pq.V, row=0, column=0)
 
         s.focusSet = QPushButton()
         grid.addWidget(s.focusSet,0,1)
         s.focusSet.setText("Set Focus")
         s.focusSet.clicked[bool].connect(
-            lambda: self.trait_set(focus=float(s.focus.getText())*pq.V)
+            lambda: self.trait_set(focus=float(s.focus.ui.getText())*pq.V)
         )
 
         # reconnectQuTau
@@ -331,14 +347,18 @@ class ScanGui(tr.HasTraits):
         # self.scale = Scale(frame,from_=0, to=5, resolution=0.001, orient=HORIZONTAL, command=self.ValueChanged)
         # self.scale.grid(row=0,column=1)
         # a checkbox for switching autoscale off or on
+        for line in """
+        autoscale   3 5 Autoscale
+        correct     3 6 Correction
+        """.split('\n'):
+            if not line.strip():
+                continue
+            parts = line.split(None,3)
+            if len(parts) < 4:
+                parts.append(parts[0])
+            trait,row,column,name = parts
+            setattr(s,trait,QtTraitLink.make(grid,self,trait,row=row,column=column,text=name))
         if False:
-            s.autoscaleVar = Tk.BooleanVar()
-            s.autoscale = Tk.Checkbutton(
-                frame, text="Autoscale",
-                variable=s.autoscaleVar,
-                command=cb(lambda:self.trait_set(autoscale=s.autoscaleVar.get()))
-            )
-            s.autoscale.select()
             s.autoscale.grid(row=3, column=5)
             # add a button to loadConfig
             s.openConfig = Tk.Button(
@@ -527,26 +547,27 @@ class ScanGui(tr.HasTraits):
             s.countEntry.grid(row=1, column=4)
 
 
-            self._create_scan_plot(frame)
             self._create_feedback_plot(frame)
             self._create_rate_plot(frame)
             self._create_HBT_plot(frame)
 
             frame.config()
 
+        self._create_scan_plot(grid)
+
         self._frame = wnd
         wnd.show()
 
 
-    def _create_scan_plot(self, frame):
-        f = TkFigure(
-            frame,
+    def _create_scan_plot(self, grid):
+        f = QtFigure(
+            grid,
             figsize=(4, 4), dpi=100,
             xlabel='',ylabel='',
             left=0.12,bottom=0.07,
             top = 0.04, right=0.04,
-            grid=dict(row=4,column=0,columnspan=2,rowspan=6),
-            update=self._update_map_image
+            update=self._update_map_image,
+            grid = dict(row=4,column=0,rowspan=6,columnspan=2),
         )
         xr,yr = self.map.extents.mag_in(pq.um)
         data = self.map.data.magnitude
