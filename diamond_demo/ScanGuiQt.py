@@ -7,6 +7,7 @@ import importlib
 import os.path
 import abc
 import datetime
+import types
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
 from PyQt5.QtGui import QPalette
@@ -303,6 +304,9 @@ class ScanGui(tr.HasTraits):
 
     save_dir = tr.Directory()
 
+
+    force_hbt = tr.Bool(True)
+
     @classmethod
     @catch2messagebox
     def main(cls,**kw):
@@ -369,6 +373,32 @@ class ScanGui(tr.HasTraits):
 
 
     def _create_frame(self):
+
+        from PyQt5 import uic
+
+        mainwnd = uic.loadUi(os.path.join(os.path.dirname(__file__),'..','MainWindow.ui'))
+        self._frame = mainwnd
+        cls = type(self)
+        for k,v in mainwnd.__dict__.items():
+            if k.startswith('trait_'):
+                k = k[6:]
+            a = getattr(cls, k, None)
+            t = self.trait(k)
+            if isinstance(v,QPushButton):
+                if not isinstance(a,types.FunctionType):
+                    print('Could not find callback handler for button "%s": %s'%(k,type(a).__name__))
+                else:
+                    v.clicked.connect(a)
+            elif t is not None:
+                print('Ignoring trait "%s": %s'%(k,t))
+            else:
+                print('Ignoring unknown "%s": %s' % (k, a))
+
+        self._create_scan_plot(mainwnd.map_widget)
+        self._create_rate_plot(mainwnd.rate_plot_widget)
+
+        mainwnd.show()
+        return
 
         # add our gui to the master Widget
         wnd = QMainWindow()
@@ -528,16 +558,18 @@ class ScanGui(tr.HasTraits):
         wnd.show()
 
 
-    def _create_scan_plot(self, grid):
+    def _create_scan_plot(self, parent):
         f = QtFigure(
-            grid,
+            parent.widget(),
             figsize=(4, 4), dpi=100,
             xlabel='',ylabel='',
             left=0.12,bottom=0.07,
             top = 0.04, right=0.04,
             update=self._update_map_image,
-            grid = dict(row=4,column=0,rowspan=4,columnspan=2),
+#            grid = dict(row=4,column=0,rowspan=4,columnspan=2),
         )
+        parent.addWidget(f.canvas)
+
         xr,yr = self.map.extents.mag_in(pq.um)
         data = self.map.data.magnitude
         f.img = f.ax.pcolorfast(
@@ -585,16 +617,17 @@ class ScanGui(tr.HasTraits):
         self._fb_map_fig = f
         
 
-    def _create_rate_plot(self, grid):
+    def _create_rate_plot(self, parent):
         f = QtFigure(
-            grid,
+            parent.widget(),
             figsize=(3, 1.5), dpi=100,
             xlabel='',ylabel='Counts [kHz]',
             left=0.2,bottom=0.1,
             top = 0.1, right=0.04,
-            grid=dict(row=4,column=4,columnspan=3,rowspan=3),
+#            grid=dict(row=4,column=4,columnspan=3,rowspan=3),
             update=self._update_rate_trace
-        )        
+        )
+        parent.addWidget(f.canvas)
         ax = f.ax
         line, = ax.plot(np.tile(np.nan,100))
         f.trace = line
