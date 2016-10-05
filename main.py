@@ -10,8 +10,14 @@ if path not in sys.path:
 
 from diamond_demo.ScanGuiQt import ScanGui
 
+def excepthook(exctype, excvalue, tb):
+    import traceback
+    print('this is my except hook!')
+    traceback.print_exception(exctype, excvalue, tb)
+#    sys.exit(-1)
 
 if __name__ == '__main__':
+    sys.excepthook = excepthook
     ScanGui.main(
         config_file = os.path.join(basedir,'configs','scanner_config.cfg'),
     )

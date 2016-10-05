@@ -9,12 +9,13 @@ import abc
 import datetime
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
+from PyQt5.QtGui import QPalette
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QMessageBox,
     QHBoxLayout, QVBoxLayout, QGridLayout,
     QPushButton, QCheckBox, QLineEdit, QLabel, QSlider,
-
     QSizePolicy,
+    QFileDialog,
 )
 
 import numpy as np
@@ -58,6 +59,15 @@ def handle_traits_error(object, trait_name, old_value, new_value):
 class Signal(QObject):
     signal = pyqtSignal()
 
+    def __init__(self):
+        super(Signal,self).__init__()
+
+    def connect(self, cb):
+        return self.signal.connect(cb)
+
+    def emit(self):
+        self.signal.emit()
+
 class QtFigure(tr.HasTraits):
     ax = tr.Instance(mpl.axes.Axes)
     canvas = tr.Instance(mpl.backends.backend_qt5agg.FigureCanvasQTAgg)
@@ -74,7 +84,16 @@ class QtFigure(tr.HasTraits):
         for k in 'xlabel ylabel'.split():
             if k in kw:
                 ax[k] = kw.pop(k)
-                
+        if False:
+            if grid is not None:
+                bgc = parent.parent().palette().color(QPalette.Background)
+            else:
+                bgc = parent.palette().color(QPalette.Background)
+        fig.setdefault(
+            'facecolor',
+#            (bgc.red()/255,bgc.green()/255,bgc.blue()/255)
+            'none'
+        )
         f = mpl.figure.Figure(**fig)
         ax = f.add_axes([left,bottom,1-left-right,1-bottom-top],**ax)
         canvas = mpl.backends.backend_qt5agg.FigureCanvasQTAgg(f)
@@ -93,7 +112,7 @@ class QtFigure(tr.HasTraits):
             connect(e,canvas,self)
 
         sig = Signal()
-        sig.signal.connect(self._do_update)
+        sig.connect(self._do_update)
         kw.update(
             ax = ax,
             canvas = canvas,
@@ -123,9 +142,9 @@ class QtTraitLink(tr.ABCHasStrictTraits):
 
     @classmethod
     def make(cls,parent,obj,trait,*,row=None,column=None,**kw):
+        t = trait_type(obj, trait)
         if cls is QtTraitLink:
             # determine subclass from type
-            t = trait_type(obj, trait)
             if isinstance(t, tr.Bool):
                 cls = QtBoolLk
             elif isinstance(t, QuantityArrayTrait):
@@ -147,7 +166,7 @@ class QtTraitLink(tr.ABCHasStrictTraits):
             ret._request_update,
             ret.trait
         )
-        sig.signal.connect(ret._do_update)
+        sig.connect(ret._do_update)
         ret._set(getattr(obj,trait))
         return ret
     
@@ -162,7 +181,10 @@ class QtTraitLink(tr.ABCHasStrictTraits):
         self._set(new)
     
     def _update_trait(self, *args, **kw):
-        new = self._get()
+        try:
+            new = self._get()
+        except Exception:
+            return
         self.ui_changed = new
         if not self.auto_update:
             return
@@ -180,6 +202,7 @@ class QtTraitLink(tr.ABCHasStrictTraits):
     def _get(self): pass
 
 class QtBoolLk(QtTraitLink):
+    auto_update = True
     def _make_ui(self,**ui):
         self.ui = QCheckBox(**ui)
         self.ui.stateChanged.connect(self._update_trait)
@@ -187,18 +210,52 @@ class QtBoolLk(QtTraitLink):
         self.ui.setChecked(val)
     def _get(self):
         return self.ui.isChecked()
-            
-class QtFloatLk(QtTraitLink):
-    fmt = tr.Str('%.3f')
 
-    def _make_ui(self,**ui):
-        self.ui = QLineEdit(**ui)
-        self.ui.textChanged.connect(self._update_trait)
+class QtStrLk(QtTraitLink):
+    readonly = tr.Bool(False)
+
+    def _make_ui(self, **ui):
+        if self.readonly:
+            self.ui = QLabel(**ui)
+        else:
+            self.ui = QLineEdit(**ui)
+            self.ui.textChanged.connect(self._update_trait)
 
     def _set(self, val):
+        text = self.ui.text()
+        ntext = self._fmt(val)
+        if text == ntext:
+#            print('not updating, no change in text',text,val,ntext)
+            return
+        try:
+            pval = self._parse(text)
+        except Exception as ex:
+            pass
+        else:
+            if pval == val:
+#                print('Not updating, no change in value!',pval,text,val,ntext)
+                return
+#Y            print('do set',pval,text,val,ntext)
         self.ui.setText(self._fmt(val))
     def _get(self):
-        return self._parse(self.ui.getText())
+        text = self.ui.text()
+        try:
+            return self._parse(text)
+        except Exception as ex:
+            import traceback
+            print('Cannot parse "%s"'%text,ex)
+            raise
+
+    def _fmt(self, val):
+        return val
+
+    def _parse(self, val):
+        return val
+
+
+class QtFloatLk(QtStrLk):
+    fmt = tr.Str('%.3f')
+
     def _fmt(self, val):
         return self.fmt%val
     def _parse(self, val):
@@ -208,11 +265,11 @@ class QtQuantityLk(QtFloatLk):
     unit = tr.Any
     
     def _fmt(self, val):
-        return self.fmt%val.mag_in(self.unit) + ' '+ str(self.unit)
+        return self.fmt%val.mag_in(self.unit) + ' '+ str(self.unit.dimensionality)
     def _parse(self, val):
         parts = val.split(None,1)
         if len(parts)>1:
-            unit = getattr(pq,parts[1:])
+            unit = getattr(pq,parts[1])
         else:
             unit = self.unit
         return float(parts[0]) * unit
@@ -231,6 +288,7 @@ class ScanGui(tr.HasTraits):
     position = tr.DelegatesTo('_s')
     signal_ratio = tr.DelegatesTo('_s')
     auto_optimisation = tr.DelegatesTo('_s')
+    auto_correction = tr.DelegatesTo('_s')
     hbt_force = tr.DelegatesTo('_s')
     autoscale = tr.Bool(True)
     normalise = tr.Bool(True)
@@ -242,7 +300,9 @@ class ScanGui(tr.HasTraits):
     fb_map = tr.DelegatesTo('_s')
     rate_trace = QuantityArrayTrait(np.zeros(100)*pq.kHz,shape=(None,))
     last_HBT = tr.Any
-    
+
+    save_dir = tr.Directory()
+
     @classmethod
     @catch2messagebox
     def main(cls,**kw):
@@ -312,7 +372,7 @@ class ScanGui(tr.HasTraits):
 
         # add our gui to the master Widget
         wnd = QMainWindow()
-        wnd.statusBar()
+        statusbar = wnd.statusBar()
 
         widget = QWidget()
         wnd.setCentralWidget(widget)
@@ -321,35 +381,35 @@ class ScanGui(tr.HasTraits):
         s = Struct()
         cb = catch2messagebox
 
+        s.modestatus = QtStrLk.make(None,self,'mode',readonly=True)
+        statusbar.addPermanentWidget(s.modestatus.ui)
+
         grid = QGridLayout(widget)
 
         # we need one slider for focus
         # self.scaleLabel = Label(frame, text="Focus: ")
         # self.scaleLabel.grid(row=0, column=0)
-        s.focus = QtTraitLink.make(grid, self, 'focus', unit=pq.V, row=0, column=0)
+        s.focus = QtQuantityLk.make(grid, self, 'focus', unit=pq.V, row=0, column=0)
 
-        s.focusSet = QPushButton()
-        grid.addWidget(s.focusSet,0,1)
-        s.focusSet.setText("Set Focus")
-        s.focusSet.clicked[bool].connect(
-            lambda: self.trait_set(focus=float(s.focus.ui.getText())*pq.V)
-        )
+        def make_button(text,row,column,cb):
+            b = QPushButton(text=text)
+            grid.addWidget(b,row,column)
+            b.clicked.connect(cb)
+            return b
 
-        # reconnectQuTau
-        def reconnect():
-            print('reconnect pressed!')
-            self._s._tdc.reset()
-        s.rcQuTau = QPushButton()
-        grid.addWidget(s.rcQuTau,1,1)
-        s.rcQuTau.setText("Reconnect QuTau")
-        s.rcQuTau.clicked[bool].connect(reconnect)
+        if False:
+            s.focusSet = make_button(
+                "Set Focus",0,1,
+                lambda val: self.trait_set(focus=float(s.focus.ui.text()) * pq.V)
+            )
 
-        # self.scale = Scale(frame,from_=0, to=5, resolution=0.001, orient=HORIZONTAL, command=self.ValueChanged)
-        # self.scale.grid(row=0,column=1)
-        # a checkbox for switching autoscale off or on
         for line in """
-        autoscale   3 5 Autoscale
-        correct     3 6 Correction
+            autoscale           3 5 Autoscale; Auto-scale detection rate plot
+            correct             3 6 Subtract background; Use current estimate of SNR to subtract a constant background from g(2), assuming uncorrelated background events
+            auto_correction     2 8 Determine SNR; Automatically update signal to noise ratio from drift correction scans
+            normalise           3 8 Normalise; Normalise g(2) function to 1 at long delays
+            auto_optimisation   4 8 Correct for drift; Periodically check for drift and adjust detection position when necessary
+            hbt_force           6 8 Force HBT; Force accumulation of coincidence events even when usually disabled, e.g. when mapping or performing drift cancellation
         """.split('\n'):
             if not line.strip():
                 continue
@@ -357,23 +417,49 @@ class ScanGui(tr.HasTraits):
             if len(parts) < 4:
                 parts.append(parts[0])
             trait,row,column,name = parts
-            setattr(s,trait,QtTraitLink.make(grid,self,trait,row=row,column=column,text=name))
+            if ';' in name:
+                name, tip = (s.strip() for s in name.split(';',1))
+            else:
+                tip = None
+            setattr(s,trait,QtTraitLink.make(grid,self,trait,row=int(row),column=int(column),text=name,toolTip=tip))
+
+        s.bgrateVar = QtTraitLink.make(grid,self,'signal_ratio',row=3,column=7)
+
+        s.rcQuTau = make_button("Reconnect QuPsi",1,1,self._s._tdc.reset)
+
+        s.openConfig = make_button(
+            "Open Config File", 1, 0,
+            self.open_config,
+        )
+
+        s.startScan = make_button(
+            "Start Scan", 2, 0,
+            lambda: self._s.scan(self.map),
+        )
+
+        s.stopScan = make_button(
+            "Stop Scan", 2, 1,
+            self._s.stop,
+        )
+
+        s.resetPos = make_button(
+            "Goto 0/0", 3, 4,
+            lambda: self._s.trait_set(position=(0,0)*pq.um),
+        )
+
+        # TODO: HBT setup params
+        s.hbtButton = make_button(
+            "Reset HBT", 1, 5,
+            lambda: self.reset_hbt(
+                float(s.binWidth.get())*pq.ns,
+                float(s.binCount.get())*pq.ns,
+            ),
+        )
+
+        s.hbtStop = make_button("Stop HBT",1,7,self.stop_hbt)
+
+
         if False:
-            s.autoscale.grid(row=3, column=5)
-            # add a button to loadConfig
-            s.openConfig = Tk.Button(
-                frame, text="Open Config File",
-                command = cb(self.open_config)
-            )
-            s.openConfig.grid(row=1, column=0)
-
-            # add a button to start the scanning
-            s.startScan = Tk.Button(
-                frame, text="Start Scan",
-                command=cb(lambda: self._s.scan(self.map))
-            )
-            s.startScan.grid(row=2, column=0)
-
             s.dataDirVar = Tk.StringVar()
             s.dataDirEntry = Tk.Entry(frame, textvariable=s.dataDirVar)
             s.dataDirEntry.grid(row=5, column=7)
@@ -389,22 +475,6 @@ class ScanGui(tr.HasTraits):
                 command = cb(lambda:self.save_data(s.dataDirVar.get()))
             )
             s.saveData.grid(row=6, column=7)
-
-
-
-            # add button to stop scanning
-            s.stopScan = Tk.Button(
-                frame, text="Stop Scan",
-                command = cb(self._s.stop)
-            )
-            s.stopScan.grid(row=2, column=1)
-
-            # button for resetting position
-            s.resetPos = Tk.Button(
-                frame, text="Goto 0/0",
-                command=cb(lambda:self._s.trait_set(position=(0,0)*pq.um)),
-            )
-            s.resetPos.grid(row=3, column=4)
 
             # Xslider
             s.xVar = Tk.StringVar()
@@ -443,17 +513,6 @@ class ScanGui(tr.HasTraits):
 
             s.angleButton = Tk.Button(frame, text="Show Voltage", command=cb(self.show_galvo_voltages))
             s.angleButton.grid(row=1, column=8)
-            # button for showing hbt
-            s.hbtButton = Tk.Button(
-                frame, text="Reset HBT",
-                command=cb(lambda:self.reset_hbt(
-                    float(s.binWidth.get())*pq.ns,
-                    float(s.binCount.get())*pq.ns,
-                )),
-            )
-            s.hbtButton.grid(row=1, column=5)
-            s.hbtUnRunButton = Tk.Button(frame, text="Stop HBT", command=cb(self.stop_hbt))
-            s.hbtUnRunButton.grid(row=1, column=7)
 
             # force hbt
             s.hbt_force_var = Tk.BooleanVar()
@@ -464,63 +523,6 @@ class ScanGui(tr.HasTraits):
             )
             s.hbt_force.grid(row=6, column=8)
 
-
-            # checkbox for correction of HBT
-            s.correctionVar = Tk.BooleanVar()
-            self.on_trait_change(
-                lambda n: s.correctionVar.set(n),
-                'correct'
-            )
-            self.trait_property_changed('correct',self.correct)
-            s.correctionCheck = Tk.Checkbutton(
-                frame, text="correction", variable=s.correctionVar,
-                command=cb(lambda:self.trait_set(correct=s.correctionVar.get())),
-            )
-            s.correctionCheck.grid(row=3, column=6)
-            s.bgrateVar = TkVarLink.make(
-                frame,
-                self, 'signal_ratio',
-                row=3,column=7,
-                fmt = '%.3f',
-            )
-
-            # autocorrection
-            s.autocorrVar = Tk.BooleanVar()
-            self._s.on_trait_change(
-                lambda n: s.autocorrVar.set(n),
-                'auto_correction'
-            )
-            self._s.trait_property_changed('auto_correction',self._s.auto_correction)
-            s.autocorrCheck = Tk.Checkbutton(
-                frame, text="autocorrection", variable=s.autocorrVar,
-                command=cb(lambda:self._s.trait_set(auto_correction=s.autocorrVar.get())),
-            )
-            s.autocorrCheck.grid(row=2, column=8)
-            # checkbox for normalization
-            s.normVar = Tk.BooleanVar()
-            self.on_trait_change(
-                lambda n: s.normVar.set(n),
-                'normalise'
-            )
-            self.trait_property_changed('normalise',self.normalise)
-            s.normCheck = Tk.Checkbutton(
-                frame, text="Normalization", variable=s.normVar,
-                command=cb(lambda:self.trait_set(normalise=s.normVar.get())),
-            )
-            s.normCheck.grid(row=3, column=8)
-
-            # checkbox for automatical maximum feedback
-            s.autofeedbackVar = Tk.BooleanVar()
-            self.on_trait_change(
-                lambda n: s.autofeedbackVar.set(n),
-                'auto_optimisation'
-            )
-            self.trait_property_changed('auto_optimisation',self.auto_optimisation)
-            s.autofeedbackCheck = Tk.Checkbutton(
-                frame, text="Auto feedback", variable=s.autofeedbackVar,
-                command=cb(lambda:self._s.trait_set(auto_optimisation=s.autofeedbackVar.get())),
-            )
-            s.autofeedbackCheck.grid(row=4, column=8)
 
             # scanner mode
             s.modeVar = Tk.StringVar()
@@ -547,13 +549,13 @@ class ScanGui(tr.HasTraits):
             s.countEntry.grid(row=1, column=4)
 
 
-            self._create_feedback_plot(frame)
-            self._create_rate_plot(frame)
-            self._create_HBT_plot(frame)
 
             frame.config()
 
         self._create_scan_plot(grid)
+        self._create_rate_plot(grid)
+        self._create_feedback_plot(grid)
+        self._create_HBT_plot(grid)
 
         self._frame = wnd
         wnd.show()
@@ -567,7 +569,7 @@ class ScanGui(tr.HasTraits):
             left=0.12,bottom=0.07,
             top = 0.04, right=0.04,
             update=self._update_map_image,
-            grid = dict(row=4,column=0,rowspan=6,columnspan=2),
+            grid = dict(row=4,column=0,rowspan=4,columnspan=2),
         )
         xr,yr = self.map.extents.mag_in(pq.um)
         data = self.map.data.magnitude
@@ -596,9 +598,9 @@ class ScanGui(tr.HasTraits):
             return
         self._map_fig.request_update()
 
-    def _create_feedback_plot(self, frame):
-        f = TkFigure(
-            frame,
+    def _create_feedback_plot(self, grid):
+        f = QtFigure(
+            grid,
             figsize=(1.5, 1.5), dpi=100,
             grid=dict(row=4,column=2,columnspan=2,rowspan=3),
             update=self._update_fb_map_image
@@ -616,9 +618,9 @@ class ScanGui(tr.HasTraits):
         self._fb_map_fig = f
         
 
-    def _create_rate_plot(self, frame):
-        f = TkFigure(
-            frame,
+    def _create_rate_plot(self, grid):
+        f = QtFigure(
+            grid,
             figsize=(3, 1.5), dpi=100,
             xlabel='',ylabel='Counts [kHz]',
             left=0.2,bottom=0.1,
@@ -641,9 +643,9 @@ class ScanGui(tr.HasTraits):
         self._rate_fig = f
 
 
-    def _create_HBT_plot(self, frame):
-        f = TkFigure(
-            frame,
+    def _create_HBT_plot(self, grid):
+        f = QtFigure(
+            grid,
             figsize=(9, 3), dpi=100,
             xlabel=r'$\tau$ [ns]',ylabel='$g^2$',
             left=0.08,bottom=0.15,
@@ -724,21 +726,23 @@ class ScanGui(tr.HasTraits):
         ))
 
     def open_config(self):
-        f = filedialog.askopenfile(initialdir="./configs", filetypes=[("ConfigFile", "*.cfg")])
-        print('load config',f.name)
-        if f is not None:
-            self.load_config(f.name)
+        fn,g = QFileDialog.getOpenFileName(self._frame,'Open config file')
+        # no idea what the second return value contains, but it always seems to be an empty string
+        assert g == ''
+        print('load config',fn)
+        if fn:
+            self.load_config(fn)
             print('done load config')
 
-    def select_data_dir(self,tkvar):
-        f = filedialog.askdirectory(
-            mustexist=True,
-            title="Select folder where data is saved to",
-        )
-        if f is not None:
-            tkvar.set(os.path.abspath(f))
+    def select_data_dir(self):
+        fn,g = QFileDialog.getExistingDirectory(self._frame,'Select folder for saved data')
+        # no idea what the second return value contains, but it always seems to be an empty string
+        assert g == ''
+        if fn:
+            self.save_dir = fn
 
-    def save_data(self,basepath):
+    def save_data(self):
+        basepath = self.save_dir
         now = datetime.datetime.now()
         basefn = os.path.join(basepath,now.strftime('%Y%m%d-%H%M%S-'))
 
@@ -753,9 +757,9 @@ class ScanGui(tr.HasTraits):
                 delimiter=', ',
                 header = (
                     "Photon auto-correlations\n"
-                    + ("normalised to 1 at long delays\n" if self.normalise else "normalised using average count rate")
+                    + ("normalised to 1 at long delays\n" if self.normalise else "normalised using average count rate\n")
                     + ("uncorrelated background subtracted\n" if self.correct else "")
-                    + "\ndelay [ns], g2 [unitless]"
+                    + "delay [ns], g2 [unitless]"
                 ),
             )
 
