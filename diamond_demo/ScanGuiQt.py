@@ -561,7 +561,7 @@ class ScanGui(tr.HasTraits):
     def _create_scan_plot(self, parent):
         f = QtFigure(
             parent.widget(),
-            figsize=(4, 4), dpi=100,
+#            figsize=(4, 4), dpi=100,
             xlabel='',ylabel='',
             left=0.12,bottom=0.07,
             top = 0.04, right=0.04,
