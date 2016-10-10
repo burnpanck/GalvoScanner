@@ -1,5 +1,5 @@
 ﻿import time
-import importlib
+import logging
 
 import numpy as np
 import quantities as pq
@@ -85,12 +85,12 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
 
     position_offset = QuantityArrayTrait(pq.um,shape=(2,))
     position = tr.Property(
-        handler = QuantityArrayTrait(pq.um,shape=(2,)),
+        trait = QuantityArrayTrait(pq.um,shape=(2,)),
         depends_on = '_pos:position,position_offset',
     )
     _focus_end = QuantityTrait(5*pq.V)
     focus = tr.Property(
-        handler = QuantityTrait(pq.V),
+        trait = QuantityTrait(pq.V),
         depends_on = '_pos:piezo_voltage,_focus_end',
     )
     signal_ratio = tr.DelegatesTo('_tdc')
@@ -107,18 +107,31 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     _previous_mode = tr.Enum('idle','mapping', 'on_target', 'optimising', 'hbt')
     _cur_map = tr.Instance(FluorescenceMap)
     _cur_idx = tr.Array(int,shape=(2,))
+    _cur_scale = tr.Int()
+    _steps_done = tr.CLong(0)
+    _nsteps = tr.CLong(1)
+    scan_progress = tr.Property(
+        trait=tr.CFloat,
+        fget=lambda self:100*self._steps_done/max(1,self._nsteps),
+        depends_on = '_steps_done,_nsteps',
+    )
     new_hbt = tr.Event
 
     fb_map = tr.Instance(FluorescenceMap)    
-    
+
+    _logger = tr.Instance(logging.Logger,factory=logging.getLogger,args=('Scanner',))
+
     # scanner class: needs sampleSize (to calculate the max and min angles for the galvo) and
     #               the distance from the galvo to the lens
 
     # arguments: all units in mm, devicePhi for Xtranslation, devicetheta for Ytranslation
     def __init__(self, **kw):
+        from .hwctrl.PhotonCounting import SimulatedTDC
         kw.setdefault('focus',0*pq.V)
         super(ScanningRFMeasurement,self).__init__(**kw)
         self._pos
+        if isinstance(self._tdc,SimulatedTDC):
+            self._tdc._pos = self._pos
 
         if False:
             self.initCamera()
@@ -162,6 +175,7 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
     def _mode_changed(self,old,new):
         self._previous_mode = old
         self._tdc.freeze = (not self.hbt_force) and new != 'hbt'
+        self._logger.debug('Mode changed from %s to %s',old,new)
         if new == 'optimising':
             map = self._fb_map_default()
             map.centre = self.position
@@ -179,26 +193,40 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
             if self.mode in ['mapping','optimising']:
                 cm = self._cur_map
                 ci = self._cur_idx
+                cs = self._cur_scale
+                s = 1<<cs
+                sh = cm.shape
                 if ci[1]>=0:
-                    cm.update(tuple(ci),rates.sum())
-                if ci[0]&1:
-                    if ci[1]:
-                        ci[1] -= 1
+                    self._steps_done += 1
+                    if cs:
+                        s2 = s//2
+                        cm.update(np.s_[
+                            max(0,ci[0]-s2):min(sh[0],ci[0]+s-s2),
+                            max(0, ci[1] - s2):min(sh[1], ci[1] + s - s2),
+                        ],rates.sum())
                     else:
-                        ci[0] += 1
+                        cm.update(tuple(ci),rates.sum())
+                if (ci[0]>>cs)&1:
+                    if ci[1]>=s:
+                        ci[1] -= s
+                    else:
+                        ci[0] += s
                 else:
-                    if ci[1]+1<cm.shape[1]:
-                        ci[1] += 1
+                    if ci[1]+s<sh[1]:
+                        ci[1] += s
                     else:
-                        ci[0] += 1
-                if ci[0]>=cm.shape[0]:
-                    self._cur_map = None
-                    if self.mode=='optimising':
-                        self._process_optimisation(cm)
-                    self.mode=dict(
-                        mapping='idle',
-                        optimising='hbt' if self._previous_mode=='hbt' else 'on_target'
-                    )[self.mode]
+                        ci[0] += s
+                if ci[0]>=sh[0]:
+                    if cs>0:
+                        self._scan_map(cm,cs-1)
+                    else:
+                        self._cur_map = None
+                        if self.mode=='optimising':
+                            self._process_optimisation(cm)
+                        self.mode=dict(
+                            mapping='idle',
+                            optimising='hbt' if self._previous_mode=='hbt' else 'on_target'
+                        )[self.mode]
                 else:
                     tci = tuple(ci)
                     self.position = pq.asanyarray([cm.X[tci], cm.Y[tci]])
@@ -241,14 +269,25 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
             self.signal_ratio = (max-bg)/max
         self._last_optim = monotonic()
 
-    def _scan_map(self,map):
-        self._cur_idx = 0,-1
-        self._cur_map = map
+    def _scan_map(self,map, scaling = 0):
         self.position = pq.asanyarray([map.X[0,0], map.Y[0,0]])
+        sh = np.array(map.shape)
+        s = 1<<scaling
+        m = s-1
+        sidx = (((sh-1)&m)+1)//2
+        self._cur_idx = sidx[0],sidx[1]-s
+        self._cur_scale = scaling
+        self._cur_map = map
 
-    def scan(self, map):
+    def scan(self, map, scaling = 0):
         self.position_offset = (0,0)*pq.um
-        self._scan_map(map)
+        self._steps_done = 0
+        sh = np.array(map.shape)
+        self._nsteps = sum(
+            np.prod(np.ceil(sh/(1<<s)).astype(int))
+            for s in range(0,scaling+1)
+        )
+        self._scan_map(map, scaling)
         self.mode = 'mapping'
         
     def choose_point(self, point):

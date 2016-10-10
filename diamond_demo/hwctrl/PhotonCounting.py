@@ -19,14 +19,14 @@ class HBTResult(tr.HasStrictTraits):
     bin_centres = tr.Property(depends_on='start_delay,bin_size,raw_result')
     integration_time = QuantityTrait(pq.s)
     signal_ratio = tr.CFloat(desc='ratio signal to (signal+background)')
-    raw_result = tr.Array(shape=(None,))
+    raw_result = tr.Array(shape=(None,),)
 
     def g2(self,normalise=True,correct=True):
         ret = self.raw_result
         if normalise:
             long_time = (np.sum(ret[:5])+np.sum(ret[-5:]))*0.1
             if long_time>0:
-                ret /= long_time
+                ret = ret / long_time
 
         if correct:
             s2 = self.signal_ratio**2
@@ -185,12 +185,31 @@ class SimulatedTDC(RealTDC):
 
     _hbt_fun = tr.Disallow
 
-    rate = QuantityTrait(100*pq.kHz)
+    _pos = tr.Any
+    _NV_pos = tr.Any
+
+    bg_rate = QuantityTrait(30*pq.kHz)
+    NV_rate = QuantityTrait(100*pq.kHz)
     _hbt_setup = tr.Any()
 
     def __init__(self, **kw):
         super(SimulatedTDC, self).__init__(**kw)
         self.reset()
+
+    def __NV_pos_default(self):
+        from scipy.spatial import cKDTree
+        rnd = np.random.RandomState(seed=7192395)
+        return cKDTree(
+            rnd.uniform(0,10,size=(300,2)),
+            boxsize = 10,
+        )
+
+    @property
+    def _cur_rate(self):
+        pos = self._pos.position.mag_in(pq.um) if self._pos else np.r_[0, 0]
+        NVs = self._NV_pos
+        delta, idx = NVs.query(pos, k=4)
+        return self.bg_rate + self.NV_rate * np.exp(-delta ** 2 * (0.5 / 0.1 ** 2)).sum()
 
     def one_pass(self, dt):
         from yde.lib.py2to3 import monotonic
@@ -198,8 +217,9 @@ class SimulatedTDC(RealTDC):
         lr = self._last_read
         if now>=lr+self.exposure_time.mag_in(pq.s):
             self._last_read = now
-            lam = pq.unitless(self.exposure_time*self.rate)
-            self.new_data = np.random.poisson(lam,size=(2,)) / self.exposure_time
+            rate = self._cur_rate
+            lam = pq.unitless(self.exposure_time*rate)
+            self.new_data = np.random.poisson(lam/2,size=(2,)) / self.exposure_time
 
         self.require_update_by(max(
             now + self._min_wait,
@@ -232,16 +252,19 @@ class SimulatedTDC(RealTDC):
 
     def setup_hbt(self, reso, range):
         n = int(np.round(pq.unitless(range/reso)))
-        self._hbt_setup = reso,n
+        start = time.monotonic()
+        self._hbt_setup = reso,n,start
 
     @property
     def hbt(self):
-        reso,n = self._hbt_setup
+        reso,n,start = self._hbt_setup
+        tint = (time.monotonic() - start)*pq.s
+        rate = self._cur_rate
         return HBTResult(
             bin_size = reso,
             start_delay = -n * reso,
-            raw_result = np.zeros(2*n+1,int),
-            integration_time = 1 * pq.s,
+            raw_result = np.random.poisson(pq.unitless(tint*rate**2*reso),size=n),
+            integration_time = tint,
             signal_ratio = self.signal_ratio,
         )
 

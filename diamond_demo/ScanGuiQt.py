@@ -8,6 +8,7 @@ import os.path
 import abc
 import datetime
 import types
+import logging
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
 from PyQt5.QtGui import QPalette
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QMessageBox,
     QHBoxLayout, QVBoxLayout, QGridLayout,
     QPushButton, QCheckBox, QLineEdit, QLabel, QSlider,
+    QSpinBox, QDoubleSpinBox, QProgressBar,
     QSizePolicy,
     QFileDialog,
 )
@@ -29,7 +31,7 @@ import matplotlib.axes
 import matplotlib.backends.backend_qt5agg
 
 from yde.lib.misc.basics import Struct
-from yde.lib.quantity_traits import QuantityArrayTrait
+from yde.lib.quantity_traits import QuantityTrait, QuantityArrayTrait
 from yde.lib.traits_ext import declared_trait, trait_type
 
 from .Scanner import ScanningRFMeasurement, FluorescenceMap
@@ -77,7 +79,7 @@ class QtFigure(tr.HasTraits):
 
     button_press_event = tr.Event
     
-    def __init__(self, parent, fig=dict(), ax=dict(), *, grid=None, left=0.1, right=0.1, top=0.1, bottom=0.1, **kw):
+    def __init__(self, parent, fig=dict(), ax=dict(), *, left=0.1, right=0.1, top=0.1, bottom=0.1, **kw):
         for k in 'figsize dpi'.split():
             if k in kw:
                 fig[k] = kw.pop(k)
@@ -86,10 +88,7 @@ class QtFigure(tr.HasTraits):
             if k in kw:
                 ax[k] = kw.pop(k)
         if False:
-            if grid is not None:
-                bgc = parent.parent().palette().color(QPalette.Background)
-            else:
-                bgc = parent.palette().color(QPalette.Background)
+            bgc = parent.palette().color(QPalette.Background)
         fig.setdefault(
             'facecolor',
 #            (bgc.red()/255,bgc.green()/255,bgc.blue()/255)
@@ -98,12 +97,10 @@ class QtFigure(tr.HasTraits):
         f = mpl.figure.Figure(**fig)
         ax = f.add_axes([left,bottom,1-left-right,1-bottom-top],**ax)
         canvas = mpl.backends.backend_qt5agg.FigureCanvasQTAgg(f)
-        if grid is None:
-            canvas.setParent(parent)
-        else:
-            parent.addWidget(canvas,grid['row'],grid['column'],grid['rowspan'],grid['columnspan'])
-        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout = QHBoxLayout(parent)
+        layout.addWidget(canvas)
 
+        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         canvas.updateGeometry()
 
 
@@ -132,7 +129,17 @@ class QtFigure(tr.HasTraits):
         self.update(self)
         self.canvas.draw()
 
-class QtTraitLink(tr.ABCHasStrictTraits):
+class QtTraitLinkMeta(type(tr.ABCHasStrictTraits)):
+    def __new__(mcls, cls, bases, dct):
+        ret = super().__new__(mcls,cls,bases,dct)
+        ret._link_classes[ret._ui_class,ret._trait_type] = ret
+        return ret
+
+class QtTraitLink(tr.ABCHasStrictTraits,metaclass=QtTraitLinkMeta):
+    _ui_class = QWidget
+    _trait_type = (tr.TraitType,)
+    _link_classes = {}
+
     obj = tr.Instance(tr.HasTraits)
     trait = tr.Str
     ui = tr.Any
@@ -142,33 +149,49 @@ class QtTraitLink(tr.ABCHasStrictTraits):
     ui_changed = tr.Event(desc="emitted when the UI changes, which might not yet have been reflected on the trait")
 
     @classmethod
-    def make(cls,parent,obj,trait,*,row=None,column=None,**kw):
-        t = trait_type(obj, trait)
+    def connect(cls,obj,trait,ui,**kw):
         if cls is QtTraitLink:
-            # determine subclass from type
-            if isinstance(t, tr.Bool):
-                cls = QtBoolLk
-            elif isinstance(t, QuantityArrayTrait):
-                cls = QtQuantityLk
-            else:
-                cls = QtFloatLk
+            # determine subclass from trait type and ui class
+            t = trait_type(obj, trait)
+            if t is None or isinstance(t,tr.CTrait):
+                print('Warning: unknown trait type for attributen ',trait,t)
+                t = tr.TraitType()
+            choice = None
+            umro = type(ui).__mro__
+            tmro = type(t).__mro__
+#            print('Looking for link',ui,umro,t,tmro)
+            for (uicls,traittype),linkcls in cls._link_classes.items():
+#                print(linkcls,isinstance(ui,uicls),isinstance(t,traittype))
+                if not isinstance(ui,uicls):
+                    continue
+                if not isinstance(t,traittype):
+                    continue
+                idx = (
+                    umro.index(uicls) if not isinstance(uicls,tuple) else min(umro.index(c) for c in uicls),
+                    tmro.index(traittype) if not isinstance(traittype,tuple) else min(tmro.index(c) for c in traittype),
+                )
+#                print(idx,choice)
+                if choice is None or all(a<=b for a,b in zip(idx,choice[0])):
+                    choice = idx,linkcls
+                elif not all(a>=b for a,b in zip(idx,choice[0])):
+                    raise TypeError('Ambiguous link ',trait,ui,t,(idx,linkcls),choice)
+            if choice is None or choice[1] is QtTraitLink:
+                raise TypeError('No matching link ',trait,ui,t)
+            # second chance for subclasses
+            return choice[1].connect(obj,trait,ui,**kw)
         traits = dict()
         for k in cls.class_editable_traits():
             if k in kw:
                 traits[k] = kw.pop(k)
         sig = Signal()
-        ret = cls(obj=obj,trait=trait,_notifier=sig,**traits)
-        ret._make_ui(**kw)
-        if row is None or column is None:
-            ret.ui.setParent(parent)
-        else:
-            parent.addWidget(ret.ui,row,column)
+        ret = cls(obj=obj,trait=trait,_notifier=sig,ui=ui,**traits)
+        ret._set(getattr(obj,trait))
+        sig.connect(ret._do_update)
+        ret._connect_ui()
         obj.on_trait_change(
             ret._request_update,
             ret.trait
         )
-        sig.connect(ret._do_update)
-        ret._set(getattr(obj,trait))
         return ret
     
      
@@ -178,23 +201,24 @@ class QtTraitLink(tr.ABCHasStrictTraits):
     @pyqtSlot()
     def _do_update(self):
         new = getattr(self.obj, self.trait)
-        print('update gui ',self.trait,new)
+#        print('update gui ',self.trait,new)
         self._set(new)
     
     def _update_trait(self, *args, **kw):
         try:
             new = self._get()
-        except Exception:
+        except Exception as ex:
+            print('failed update of "%s":%s'%(self.trait,ex))
             return
         self.ui_changed = new
         if not self.auto_update:
             return
 #        print('_update traits')
-        print('update trait ',self.trait,args,kw,new)
+ #       print('update trait ',self.trait,args,kw,new)
         setattr(self.obj, self.trait, new)
 
     @abc.abstractmethod
-    def _make_ui(self,**ui): pass
+    def _connect_ui(self,**ui): pass
     
     @abc.abstractmethod
     def _set(self, val): pass
@@ -202,25 +226,42 @@ class QtTraitLink(tr.ABCHasStrictTraits):
     @abc.abstractmethod
     def _get(self): pass
 
-class QtBoolLk(QtTraitLink):
+class QCheckBoxLk(QtTraitLink):
+    _ui_class = QCheckBox
+
     auto_update = True
-    def _make_ui(self,**ui):
-        self.ui = QCheckBox(**ui)
+
+    def _connect_ui(self):
         self.ui.stateChanged.connect(self._update_trait)
+
     def _set(self, val):
         self.ui.setChecked(val)
     def _get(self):
         return self.ui.isChecked()
 
-class QtStrLk(QtTraitLink):
-    readonly = tr.Bool(False)
+class QLabelLk(QtTraitLink):
+    _ui_class = QLabel
 
-    def _make_ui(self, **ui):
-        if self.readonly:
-            self.ui = QLabel(**ui)
-        else:
-            self.ui = QLineEdit(**ui)
-            self.ui.textChanged.connect(self._update_trait)
+    def _connect_ui(self):
+        pass
+
+    def _set(self, val):
+        self.ui.setText(self._fmt(val))
+    def _get(self):
+        return self._parse(self.ui.text())
+
+    def _fmt(self, val):
+        return val
+
+    def _parse(self, val):
+        return val
+
+
+class QLineEditLk(QtTraitLink):
+    _ui_class = QLineEdit
+
+    def _connect_ui(self):
+        self.ui.textChanged.connect(self._update_trait)
 
     def _set(self, val):
         text = self.ui.text()
@@ -254,28 +295,99 @@ class QtStrLk(QtTraitLink):
         return val
 
 
-class QtFloatLk(QtStrLk):
-    fmt = tr.Str('%.3f')
+class QIntSpinBoxLk(QtTraitLink):
+    _ui_class = QSpinBox
 
-    def _fmt(self, val):
-        return self.fmt%val
-    def _parse(self, val):
-        return float(val)
-        
-class QtQuantityLk(QtFloatLk):
-    unit = tr.Any
-    
-    def _fmt(self, val):
-        return self.fmt%val.mag_in(self.unit) + ' '+ str(self.unit.dimensionality)
-    def _parse(self, val):
-        parts = val.split(None,1)
-        if len(parts)>1:
-            unit = getattr(pq,parts[1])
+    def _connect_ui(self):
+        self.ui.valueChanged[int].connect(self._update_trait)
+
+    def _set(self, val):
+        self.ui.setValue(val)
+
+    def _get(self):
+        return self.ui.value()
+
+class QProgressBarLk(QtTraitLink):
+    _ui_class = QProgressBar
+
+    def _connect_ui(self):
+        pass
+
+    def _set(self, val):
+        self.ui.setValue(val)
+
+    def _get(self):
+        return self.ui.value()
+
+
+class QDblSpinBoxLk(QtTraitLink):
+    _ui_class = QDoubleSpinBox
+
+    def _connect_ui(self):
+        self.ui.valueChanged[float].connect(self._update_trait)
+
+    def _set(self, val):
+        self.ui.setValue(val)
+
+    def _get(self):
+        return self.ui.value()
+
+
+class QtQuantitySpinBoxLk(QDblSpinBoxLk):
+    _trait_type = (QuantityTrait,)
+
+    def _set(self, val):
+        unit = self.ui.property('hidden_unit')
+#        print('hidden unit for ',self.trait,unit)
+        if not unit:
+            self.ui.setSuffix(' '+str(val.units.dimensionality))
+            self.ui.setValue(val.magnitude)
         else:
-            unit = self.unit
-        return float(parts[0]) * unit
-        
-class ScanGui(tr.HasTraits):
+            self.ui.setValue(val.mag_in(unit))
+
+    def _get(self):
+        unit = self.ui.property('hidden_unit')
+        if not unit:
+            unit = self.ui.suffix().strip()
+        return self.ui.value() * getattr(pq,unit)
+
+class QtLogHandler(logging.Handler):
+    def __init__(self, widget=None, level=logging.DEBUG):
+        logging.Handler.__init__(self)
+        self.widget = widget
+        self.level = level
+        self._queue = []
+        self._sig = Signal()
+        self._sig.connect(self._do_update)
+
+    def flush(self):
+        """
+        does nothing for this handler
+        """
+
+    def emit(self, record):
+        """
+        Emit a record.
+
+        """
+        try:
+            msg = self.format(record)
+            self._queue.append(msg)
+            self._sig.emit()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except:
+            self.handleError(record)
+
+    @pyqtSlot()
+    def _do_update(self):
+        q = self._queue
+        if not q:
+            return
+        self._queue = []
+        self.widget.appendHtml('<br>'.join(m for m in q))
+
+class ScanGui(tr.HasStrictTraits):
     _s = tr.Instance(ScanningRFMeasurement)
     _frame = tr.Instance(QWidget)
     _tk_objects = tr.Dict(tr.Str,tr.Any)
@@ -283,11 +395,11 @@ class ScanGui(tr.HasTraits):
     _fb_map_fig = tr.Instance(QtFigure)
     _rate_fig = tr.Instance(QtFigure)
     _HBT_fig = tr.Instance(QtFigure)
+    _trait_gui_links = tr.List(tr.Instance(QtTraitLink))
 
     focus = tr.DelegatesTo('_s')
     mode = tr.DelegatesTo('_s')
     position = tr.DelegatesTo('_s')
-    signal_ratio = tr.DelegatesTo('_s')
     auto_optimisation = tr.DelegatesTo('_s')
     auto_correction = tr.DelegatesTo('_s')
     hbt_force = tr.DelegatesTo('_s')
@@ -304,8 +416,55 @@ class ScanGui(tr.HasTraits):
 
     save_dir = tr.Directory()
 
+    # ------new traits
+    # --- overal status
+    system_status = tr.DelegatesTo('_s','mode')
 
-    force_hbt = tr.Bool(True)
+    galvoX = tr.Property(
+        trait = QuantityTrait(pq.um),
+        fget = lambda self: self._s.position[0],
+        fset = lambda self,v: setattr(self._s,'position',pq.asanyarray([v,self._s.position[1]])),
+        depends_on = '_s.position',
+    )
+    galvoY = tr.Property(
+        trait = QuantityTrait(pq.um),
+        fget = lambda self: self._s.position[1],
+        fset = lambda self,v: setattr(self._s,'position',pq.asanyarray([self._s.position[0],v])),
+        depends_on = '_s.position',
+    )
+    piezo_voltage = tr.DelegatesTo('_s','focus')
+
+    enable_drift_cancel = tr.DelegatesTo('_s','auto_optimisation')
+    drift_cancel_interval = tr.DelegatesTo('_s','optimisation_interval')
+
+    autoscale_rate_plot = tr.Bool(True)
+
+    # --- mapping page
+    mapping_range = QuantityTrait(2*pq.um)
+    mapping_resolution = QuantityTrait(0.1*pq.um)
+    mapping_scaling = tr.Int(2)
+    enable_multiscale = tr.Bool(True)
+
+    scan_progress = tr.DelegatesTo('_s')
+
+    map_clim_lo = QuantityTrait(pq.kHz)
+    map_clim_hi = QuantityTrait(pq.kHz)
+    autoscale_map = tr.Bool(True)
+
+    # --- hbt page
+    enable_hbt = tr.Bool(True)
+    force_hbt = tr.DelegatesTo('_s','hbt_force')
+    #clear_hbt button
+    hbt_range = QuantityTrait(100*pq.ns)
+    hbt_resolution = QuantityTrait(1*pq.ns)
+    #reset_hbt
+    normalise_hbt = tr.Bool(True)
+    auto_snr = tr.Bool(False)
+    signal_ratio = tr.DelegatesTo('_s')
+    subtract_background = tr.Bool(False)
+    #save_hbt
+
+
 
     @classmethod
     @catch2messagebox
@@ -316,13 +475,9 @@ class ScanGui(tr.HasTraits):
                 reraise_exceptions=False,
                 main=True
             )
-            print('A')
             app = QApplication([])
-            print('B')
             self = cls(**kw)
-            print('C')
             ec = app.exec_()
-            print('D',ec)
             self.deinit()
         finally:
             tr.pop_exception_handler()
@@ -334,11 +489,11 @@ class ScanGui(tr.HasTraits):
     @classmethod
     def _handle_cfg(cls, obj, settings):
         for k,v in settings.items():
-            t = declared_trait(obj.trait(k))
+            t = trait_type(obj,k)
             if isinstance(t,tr.Instance):
                 cls._handle_cfg(getattr(obj, k), v)
                 continue
-            if (isinstance(t,QuantityArrayTrait) or isinstance(t,tr.DelegatesTo)) and isinstance(v,str):
+            if isinstance(t,QuantityArrayTrait) and isinstance(v,str):
                 value,unit = v.rsplit(None,1)
                 v = eval(value)*getattr(pq,unit)
             setattr(obj, k, v)
@@ -371,6 +526,28 @@ class ScanGui(tr.HasTraits):
         self._create_frame()
         self._s._tdc.reset()
 
+    def reconnect_quPSI(self):
+        print('reconnect quPSI')
+        self._s._tdc.reset()
+
+    def center_galvo(self):
+        self._s.position = np.zeros(2,)*pq.um
+
+    def start_scan(self):
+        self.map.shape = np.tile(np.round(pq.unitless(
+            self.mapping_range/self.mapping_resolution
+        )).astype(int),2)
+        self.map.step = np.r_[1,1] * self.mapping_resolution
+        self._s.scan(self.map,self.mapping_scaling if self.enable_multiscale else 0)
+
+    def clear_hbt(self):
+        pass
+
+    def reset_hbt(self):
+        self._s.setup_hbt(self.hbt_resolution, self.hbt_range)
+
+    def save_hbt(self):
+        pass
 
     def _create_frame(self):
 
@@ -379,24 +556,32 @@ class ScanGui(tr.HasTraits):
         mainwnd = uic.loadUi(os.path.join(os.path.dirname(__file__),'..','MainWindow.ui'))
         self._frame = mainwnd
         cls = type(self)
+        links = []
         for k,v in mainwnd.__dict__.items():
-            if k.startswith('trait_'):
-                k = k[6:]
-            a = getattr(cls, k, None)
             t = self.trait(k)
+            a = getattr(self, k, None)
             if isinstance(v,QPushButton):
-                if not isinstance(a,types.FunctionType):
+                if not isinstance(a,types.MethodType):
                     print('Could not find callback handler for button "%s": %s'%(k,type(a).__name__))
                 else:
                     v.clicked.connect(a)
             elif t is not None:
-                print('Ignoring trait "%s": %s'%(k,t))
+                print('Linking trait "%s": %s'%(k,t))
+                links.append(QtTraitLink.connect(obj=self,trait=k,ui=v))
             else:
                 print('Ignoring unknown "%s": %s' % (k, a))
+        self._trait_gui_links = links
 
         self._create_scan_plot(mainwnd.map_widget)
         self._create_rate_plot(mainwnd.rate_plot_widget)
+        self._create_drift_cancel_plot(mainwnd.drift_cancel_widget)
+        self._create_HBT_plot(mainwnd.hbt_widget)
 
+        loghandler = QtLogHandler(mainwnd.log_widget,level=logging.DEBUG)
+#        loghandler.setFormatter(logging.Formatter())
+        logging.root.addHandler(loghandler)
+
+        logging.getLogger('ScanGui').info('UI ready')
         mainwnd.show()
         return
 
@@ -551,7 +736,7 @@ class ScanGui(tr.HasTraits):
 
         self._create_scan_plot(grid)
         self._create_rate_plot(grid)
-        self._create_feedback_plot(grid)
+        self._create_drift_cancel_plot(grid)
         self._create_HBT_plot(grid)
 
         self._frame = wnd
@@ -560,15 +745,12 @@ class ScanGui(tr.HasTraits):
 
     def _create_scan_plot(self, parent):
         f = QtFigure(
-            parent.widget(),
-#            figsize=(4, 4), dpi=100,
+            parent,
             xlabel='',ylabel='',
             left=0.12,bottom=0.07,
             top = 0.04, right=0.04,
             update=self._update_map_image,
-#            grid = dict(row=4,column=0,rowspan=4,columnspan=2),
         )
-        parent.addWidget(f.canvas)
 
         xr,yr = self.map.extents.mag_in(pq.um)
         data = self.map.data.magnitude
@@ -597,11 +779,10 @@ class ScanGui(tr.HasTraits):
             return
         self._map_fig.request_update()
 
-    def _create_feedback_plot(self, grid):
+    def _create_drift_cancel_plot(self, parent):
         f = QtFigure(
-            grid,
+            parent,
             figsize=(1.5, 1.5), dpi=100,
-            grid=dict(row=4,column=2,columnspan=2,rowspan=3),
             update=self._update_fb_map_image
         )
         xr,yr = self.fb_map.extents.mag_in(pq.um)
@@ -619,15 +800,13 @@ class ScanGui(tr.HasTraits):
 
     def _create_rate_plot(self, parent):
         f = QtFigure(
-            parent.widget(),
+            parent,
             figsize=(3, 1.5), dpi=100,
             xlabel='',ylabel='Counts [kHz]',
             left=0.2,bottom=0.1,
             top = 0.1, right=0.04,
-#            grid=dict(row=4,column=4,columnspan=3,rowspan=3),
             update=self._update_rate_trace
         )
-        parent.addWidget(f.canvas)
         ax = f.ax
         line, = ax.plot(np.tile(np.nan,100))
         f.trace = line
@@ -643,14 +822,13 @@ class ScanGui(tr.HasTraits):
         self._rate_fig = f
 
 
-    def _create_HBT_plot(self, grid):
+    def _create_HBT_plot(self, parent):
         f = QtFigure(
-            grid,
+            parent,
             figsize=(9, 3), dpi=100,
             xlabel=r'$\tau$ [ns]',ylabel='$g^2$',
             left=0.08,bottom=0.15,
             top = 0.04, right=0.03,
-            grid=dict(row=7,column=2,columnspan=7,rowspan=1),
             update=self._update_HBT_plot
         )        
         ax = f.ax
@@ -679,12 +857,12 @@ class ScanGui(tr.HasTraits):
             return
         self._HBT_fig.request_update()
     
-    def _update_HBT_plot(self, event):
+    def _update_HBT_plot(self, fig):
         hbt = self.last_HBT
         if hbt is None:
             return
         bc = hbt.bin_centres.mag_in(pq.ns)
-        g2 = hbt.g2(normalise=self.normalise,correct=self.correct)
+        g2 = hbt.g2(normalise=self.normalise_hbt,correct=self.subtract_background)
         self._HBT_fig.hist.set_data(
             bc,
             g2
@@ -701,21 +879,23 @@ class ScanGui(tr.HasTraits):
         trace[-1] = rate
         self.rate_trace = trace
 
-    def _rate_trace_changed(self):
+    @tr.on_trait_change('rate_trace')
+    def _rate_trace_change(self):
         if self._rate_fig is None:
             return
         self._rate_fig.request_update()
 
-    def _update_rate_trace(self, event):
+    @tr.on_trait_change('autoscale_rate_plot')
+    def _autoscale_change(self):
+        self._rate_fig.request_update()
+
+    def _update_rate_trace(self, fig):
         new = self.rate_trace
         self._rate_fig.trace.set_ydata(new.magnitude)
-        if not self.autoscale:
+        if not self.autoscale_rate_plot:
             self._rate_fig.ax.set_ylim([0, 200])
         else:
             self._rate_fig.ax.set_ylim([0, new.magnitude.max()])
-
-    def reset_hbt(self, reso, range):
-        self._s.setup_hbt(reso,range)
 
     def stop_hbt(self):
         self._s.mode = 'on_target'

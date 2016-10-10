@@ -20,7 +20,8 @@ class Lens:
         self.NA = NA
         self.n = n
 
-    def LensNumber(self):
+    @property
+    def lens_number(self):
         return 1 / np.tan(np.arcsin(self.NA / self.n))
 
 
@@ -49,7 +50,7 @@ class RealPositioning(tr.HasStrictTraits):
         depends_on = 'galvo_voltage,galvo_zero,sensitivity,focal_plane',
     )
     lens = tr.Instance(Lens, (1.3, 1.5))
-    focal_plane = QuantityTrait(1.5*pq.mm)
+    focal_plane = QuantityTrait(160*pq.um)
 
     _aout = tr.Instance('PyDAQmx.Task')
     _theta_terminal = tr.Str()
