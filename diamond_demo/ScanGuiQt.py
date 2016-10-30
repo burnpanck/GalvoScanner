@@ -76,6 +76,7 @@ class QtFigure(tr.HasTraits):
     canvas = tr.Instance(mpl.backends.backend_qt5agg.FigureCanvasQTAgg)
     update = tr.Callable
     _notifier = tr.Instance(Signal)
+    _busy = tr.Bool()
 
     button_press_event = tr.Event
     
@@ -120,7 +121,9 @@ class QtFigure(tr.HasTraits):
         super(QtFigure, self).__init__(**kw)
 
     def request_update(self):
-        self._notifier.emit()
+        if not self._busy:
+            self._busy = True
+            self._notifier.emit()
 
     @pyqtSlot()
     def _do_update(self):
@@ -128,6 +131,7 @@ class QtFigure(tr.HasTraits):
             return
         self.update(self)
         self.canvas.draw()
+        self._busy = False
 
 class QtTraitLinkMeta(type(tr.ABCHasStrictTraits)):
     def __new__(mcls, cls, bases, dct):
@@ -395,6 +399,8 @@ class ScanGui(tr.HasStrictTraits):
     _fb_map_fig = tr.Instance(QtFigure)
     _rate_fig = tr.Instance(QtFigure)
     _HBT_fig = tr.Instance(QtFigure)
+    _cam_fig = tr.Instance(QtFigure)
+    _cam_img = tr.Array(float,(None,None))
     _trait_gui_links = tr.List(tr.Instance(QtTraitLink))
 
     focus = tr.DelegatesTo('_s')
@@ -525,6 +531,7 @@ class ScanGui(tr.HasStrictTraits):
             self.load_config(config_file)
         self._create_frame()
         self._s._tdc.reset()
+        self._s._cam.reset()
 
     def reconnect_quPSI(self):
         print('reconnect quPSI')
@@ -573,6 +580,7 @@ class ScanGui(tr.HasStrictTraits):
         self._trait_gui_links = links
 
         self._create_scan_plot(mainwnd.map_widget)
+        self._create_cam_plot(mainwnd.ccd_image_widget)
         self._create_rate_plot(mainwnd.rate_plot_widget)
         self._create_drift_cancel_plot(mainwnd.drift_cancel_widget)
         self._create_HBT_plot(mainwnd.hbt_widget)
@@ -742,6 +750,42 @@ class ScanGui(tr.HasStrictTraits):
         self._frame = wnd
         wnd.show()
 
+    def _create_cam_plot(self, parent):
+            f = QtFigure(
+                parent,
+                xlabel='', ylabel='',
+                left=0.12, bottom=0.07,
+                top=0.04, right=0.04,
+                update=self._update_cam_image,
+            )
+
+            data = np.zeros((964,1288),float)
+            f.img = f.ax.pcolorfast(
+                np.arange(1288), np.arange(964), data,
+                animated=True,
+                cmap='afmhot',
+            )
+            f.ax.axis('equal')
+            f.img.set_clim(0,1)
+#            f.ax.invert_yaxis()
+#            f.ax.set_xlim(*xr)
+#            f.ax.set_ylim(*yr[::-1])
+            self._cam_fig = f
+
+    @tr.on_trait_change('_s:_cam:new_image')
+    def _cam_updated(self, event):
+        if not self._cam_fig:
+            return
+        print('new cam img',event.shape,event.min(),event.max())
+        self._cam_img = event
+        self._cam_fig.request_update()
+
+    def _update_cam_image(self, fig):
+        data = self._cam_img
+        img = fig.img
+        ax = fig.ax
+        print('update cam img',data.shape,data.min(),data.max())
+        img.set_data(data)
 
     def _create_scan_plot(self, parent):
         f = QtFigure(
@@ -771,6 +815,8 @@ class ScanGui(tr.HasStrictTraits):
         f.ax.set_xlim(*xr)
         f.ax.set_ylim(*yr[::-1])
         self._map_fig = f
+
+
 
     @tr.on_trait_change('map.extents')
     def _update_map_coords(self):
@@ -899,11 +945,6 @@ class ScanGui(tr.HasStrictTraits):
 
     def stop_hbt(self):
         self._s.mode = 'on_target'
-
-    def show_galvo_voltages(self):
-        messagebox.showinfo("Galvo voltages", "Phi: %s V, Theta: %s V" % tuple(
-            self._s._pos.galvo_voltage.mag_in(pq.V)
-        ))
 
     def open_config(self):
         fn,g = QFileDialog.getOpenFileName(self._frame,'Open config file')

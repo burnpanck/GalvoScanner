@@ -81,7 +81,7 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
         _phi_terminal = '/Dev1/ao1',
         _focus_terminal = '/Dev1/ao2',
     ))
-    _cam = tr.Instance(FlyCam)
+    _cam = tr.Instance(FlyCam,())
 
     position_offset = QuantityArrayTrait(pq.um,shape=(2,))
     position = tr.Property(
@@ -121,10 +121,6 @@ class ScanningRFMeasurement(tr.HasStrictTraits):
 
     _logger = tr.Instance(logging.Logger,factory=logging.getLogger,args=('Scanner',))
 
-    # scanner class: needs sampleSize (to calculate the max and min angles for the galvo) and
-    #               the distance from the galvo to the lens
-
-    # arguments: all units in mm, devicePhi for Xtranslation, devicetheta for Ytranslation
     def __init__(self, **kw):
         from .hwctrl.PhotonCounting import SimulatedTDC
         kw.setdefault('focus',0*pq.V)

@@ -1,75 +1,71 @@
 __author__ = 'yves'
 
+import numpy as np
+import quantities as pq
 import traits.api as tr
 
-from ..hw.pyflycam import *
+from yde.labdev.flycap import api
+from yde.lib.quantity_traits import QuantityTrait, QuantityArrayTrait
+from yde.lib.threading import RepeatingTaskRunner
 
-class FlyCam(tr.HasStrictTraits):
-    # setImage properties
-    def setImageProperties(self, gain=0.0, shutter=10.0):
-        gainProp = fc2Property()
-        shutterProp = fc2Property()
-        gainProp.type = FC2_GAIN
-        shutterProp.type = FC2_SHUTTER
+_dB2natlog = np.log(10)/10
+_natlog2dB = 10/np.log(10)
 
-        # retrieve current settings
-        fc2GetProperty(self._context, gainProp)
-        fc2GetProperty(self._context, shutterProp)
+class FlyCam(RepeatingTaskRunner):
+    _cam = tr.Instance(api.Context)
 
-        gainProp.absValue = gain
-        shutterProp.absValue = shutter
+    connected = tr.Bool(desc='read only')
 
-        fc2SetProperty(self._context, gainProp)
-        fc2SetProperty(self._context, shutterProp)
+    shutter = tr.Property(
+        QuantityTrait(pq.ms),
+    )
+    shutter_range = QuantityArrayTrait(pq.ms,shape=(2,))
+    gain = tr.Property(
+        tr.CFloat(desc='gain factor')
+    )
+    gain_range = tr.Array(float,shape=(2,))
 
-    def takePicture(self, name):
-        if not hasattr(self, "_context"):
-            self.initCamera()
+    new_image = tr.Event(tr.Array(float,(None,None)))
 
-        fc2StartCapture(self._context)
-        # create the two pictures one for getting input the other to save
-        rawImage = fc2Image()
-        convertedImage = fc2Image()
-        fc2CreateImage(rawImage)
-        fc2CreateImage(convertedImage)
+    max_period = 0.1
 
-        fc2RetrieveBuffer(self._context, rawImage)
-        self.savePicture(name, rawImage, convertedImage)
+    def __init__(self):
+        cam = api.Context()
+        cam.connect(cam.camera_from_index(0))
+        sinfo = cam.Shutter.info
+        ginfo = cam.Gain.info
+        super(FlyCam,self).__init__(
+            _cam = cam,
+            connected = True,
+            shutter_range = [sinfo.absMin,sinfo.absMax]*pq.ms,
+            gain_range = np.exp(_dB2natlog*np.r_[ginfo.absMin,ginfo.absMax])
+        )
 
-        fc2DestroyImage(rawImage)
-        fc2DestroyImage(convertedImage)
-        fc2StopCapture(self._context)
+    def _get_shutter(self):
+        return self._cam.Shutter.absValue * pq.ms
+    def _set_shutter(self, value):
+        self._cam.Shutter.absValue = pq.Quantity(value,pq.ms).manitude
 
-    def savePicture(self, name, rawImage, convertedImage):
-        fc2ConvertImageTo(FC2_PIXEL_FORMAT_BGR, rawImage, convertedImage)
+    def _get_gain(self):
+        return np.exp(_dB2natlog*self._cam.Gain.absValue)
+    def _set_gain(self, value):
+        self._cam.Gain.absValue = np.log(value)*_natlog2dB
 
-        fc2SaveImage(convertedImage, name.encode('utf-8'), 6)
+    def one_pass(self, dt):
+        img = self._cam.retrieve_buffer()
+        data = img.data / 255.
+        del img
+        self.new_image = data
 
-    def uninitCamera(self):
-        fc2StopCapture(self._context)
-        fc2DestroyContext(self._context)
+    def startup(self):
+        self._cam.start_capture()
 
-    def initCamera(self):
-        error = fc2Error()
-        self._context = fc2Context()
-        self._guid = fc2PGRGuid()
-        self._numCameras = c_uint()
+    def shutdown(self):
+        self._cam.stop_capture()
 
-        error = fc2CreateContext(self._context)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2CreateContext: " + str(error))
+    def failed(self):
+        self.shutdown()
 
-        error = fc2GetNumOfCameras(self._context, self._numCameras)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2GetNumOfCameras: " + str(error))
-        if self._numCameras == 0:
-            print("No Cameras detected")
-
-        # get the first camera
-        error = fc2GetCameraFromIndex(self._context, 0, self._guid)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2GetCameraFromIndex: " + str(error))
-
-        error = fc2Connect(self._context, self._guid)
-        if error != FC2_ERROR_OK.value:
-            print("Error in fc2Connect: " + str(error))
+    def reset(self):
+        self.stop()
+        self.start()
