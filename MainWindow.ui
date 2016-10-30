@@ -35,12 +35,9 @@
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <item>
-         <widget class="QWidget" name="ccd_image_widget" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>100</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <widget class="QGraphicsView" name="ccd_image_widget">
+          <property name="dragMode">
+           <enum>QGraphicsView::ScrollHandDrag</enum>
           </property>
          </widget>
         </item>
@@ -843,6 +840,12 @@
        </item>
        <item>
         <widget class="QGroupBox" name="groupBox">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
          <property name="title">
           <string>Photon count rate</string>
          </property>

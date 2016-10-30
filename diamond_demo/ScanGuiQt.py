@@ -11,7 +11,7 @@ import types
 import logging
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QObject
-from PyQt5.QtGui import QPalette
+from PyQt5.QtGui import QPalette, QImage, QPixmap, qRgba
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QMessageBox,
     QHBoxLayout, QVBoxLayout, QGridLayout,
@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QProgressBar,
     QSizePolicy,
     QFileDialog,
+    QGraphicsScene, QGraphicsItem, QGraphicsPixmapItem,
 )
 
 import numpy as np
@@ -399,9 +400,12 @@ class ScanGui(tr.HasStrictTraits):
     _fb_map_fig = tr.Instance(QtFigure)
     _rate_fig = tr.Instance(QtFigure)
     _HBT_fig = tr.Instance(QtFigure)
-    _cam_fig = tr.Instance(QtFigure)
-    _cam_img = tr.Array(float,(None,None))
     _trait_gui_links = tr.List(tr.Instance(QtTraitLink))
+
+    _cam_fig = tr.Any
+    _cam_img = tr.Any(None)
+    _new_cam_img = tr.Instance(Signal)
+
 
     focus = tr.DelegatesTo('_s')
     mode = tr.DelegatesTo('_s')
@@ -751,41 +755,39 @@ class ScanGui(tr.HasStrictTraits):
         wnd.show()
 
     def _create_cam_plot(self, parent):
-            f = QtFigure(
-                parent,
-                xlabel='', ylabel='',
-                left=0.12, bottom=0.07,
-                top=0.04, right=0.04,
-                update=self._update_cam_image,
-            )
+        self._new_cam_img = Signal()
+        self._new_cam_img.connect(self._update_cam_image)
+        scene = QGraphicsScene()
+        parent.setScene(scene)
+        item = QGraphicsPixmapItem()
+        scene.addItem(item)
+        self._cam_fig = item
 
-            data = np.zeros((964,1288),float)
-            f.img = f.ax.pcolorfast(
-                np.arange(1288), np.arange(964), data,
-                animated=True,
-                cmap='afmhot',
-            )
-            f.ax.axis('equal')
-            f.img.set_clim(0,1)
-#            f.ax.invert_yaxis()
-#            f.ax.set_xlim(*xr)
-#            f.ax.set_ylim(*yr[::-1])
-            self._cam_fig = f
-
-    @tr.on_trait_change('_s:_cam:new_image')
-    def _cam_updated(self, event):
-        if not self._cam_fig:
+    @tr.on_trait_change('_s:_cam:last_image')
+    def _ccd_image_changed(self, event):
+        if not self._cam_fig or self._cam_img:
             return
-        print('new cam img',event.shape,event.min(),event.max())
-        self._cam_img = event
-        self._cam_fig.request_update()
+        from matplotlib.cm import magma
+        assert event.dtype == np.dtype('u1')
+        assert event.ndim == 2
+        ctbl = np.round(magma(np.linspace(0,1,256))*255)
+        if False:
+            ctbl = ctbl.astype('u1')[:,[2,1,0,3]].ravel()
+            print(ctbl.shape,ctbl.view('<u4').shape)
+            ctbl = ctbl.view('<u4')
+        elif False:
+            ctbl = np.sum(ctbl.astype('u4')<<[16,8,0,24],-1,dtype='u4')
+        else:
+            ctbl = [qRgba(*c) for c in ctbl]
+        img = QImage(bytes(event),event.shape[1],event.shape[0],QImage.Format_Indexed8)
+        img.setColorTable(ctbl)
+        self._cam_img = QPixmap.fromImage(img)
+        self._new_cam_img.emit()
 
-    def _update_cam_image(self, fig):
-        data = self._cam_img
-        img = fig.img
-        ax = fig.ax
-        print('update cam img',data.shape,data.min(),data.max())
-        img.set_data(data)
+    def _update_cam_image(self):
+        img = self._cam_img
+        self._cam_fig.setPixmap(img)
+        self._cam_img = None
 
     def _create_scan_plot(self, parent):
         f = QtFigure(
