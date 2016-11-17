@@ -24,31 +24,126 @@
        </sizepolicy>
       </property>
       <property name="currentIndex">
-       <number>0</number>
+       <number>2</number>
       </property>
       <widget class="QWidget" name="ccd_tab">
        <property name="enabled">
-        <bool>false</bool>
+        <bool>true</bool>
        </property>
        <attribute name="title">
         <string>CCD</string>
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <item>
-         <widget class="QGraphicsView" name="ccd_image_widget">
-          <property name="dragMode">
-           <enum>QGraphicsView::ScrollHandDrag</enum>
+         <widget class="QFrame" name="frame">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
           </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <layout class="QHBoxLayout" name="horizontalLayout_10">
+           <item>
+            <widget class="AlignmentWidget" name="ccd_image_widget" native="true">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </widget>
         </item>
         <item>
          <layout class="QVBoxLayout" name="properties">
           <item>
-           <widget class="QPushButton" name="auto_ccd_exposure">
+           <widget class="QLabel" name="label_4">
             <property name="text">
-             <string>Auto-set</string>
+             <string>Zoom:</string>
             </property>
            </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="comboBox">
+            <item>
+             <property name="text">
+              <string>1</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>2</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>3</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>4</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>6</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>8</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_14">
+            <property name="text">
+             <string>Shutter:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSlider" name="horizontalSlider">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QDoubleSpinBox" name="doubleSpinBox"/>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_15">
+            <property name="text">
+             <string>Gain:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSlider" name="horizontalSlider_2">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QDoubleSpinBox" name="doubleSpinBox_2"/>
           </item>
           <item>
            <spacer name="verticalSpacer_3">
@@ -62,13 +157,6 @@
              </size>
             </property>
            </spacer>
-          </item>
-          <item>
-           <widget class="QPushButton" name="edit_ccd_properties">
-            <property name="text">
-             <string>Properties...</string>
-            </property>
-           </widget>
           </item>
          </layout>
         </item>
@@ -604,6 +692,9 @@
            <layout class="QFormLayout" name="formLayout">
             <item row="0" column="0">
              <widget class="QLabel" name="DAQ_status_lbl">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
               <property name="text">
                <string>DAQ</string>
               </property>
@@ -611,13 +702,19 @@
             </item>
             <item row="0" column="1">
              <widget class="QLabel" name="DAQ_status">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
               <property name="text">
-               <string>not connected</string>
+               <string>no information</string>
               </property>
              </widget>
             </item>
             <item row="1" column="0">
              <widget class="QLabel" name="quPSI_status_lbl">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
               <property name="text">
                <string>quPSI</string>
               </property>
@@ -625,8 +722,11 @@
             </item>
             <item row="1" column="1">
              <widget class="QLabel" name="quPSI_status">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
               <property name="text">
-               <string>not connected</string>
+               <string>no information</string>
               </property>
              </widget>
             </item>
@@ -876,6 +976,14 @@
    </layout>
   </widget>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>AlignmentWidget</class>
+   <extends>QWidget</extends>
+   <header>diamond_demo/lib/alignment_widget.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
  <slots>

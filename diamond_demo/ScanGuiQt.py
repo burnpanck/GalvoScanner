@@ -757,11 +757,7 @@ class ScanGui(tr.HasStrictTraits):
     def _create_cam_plot(self, parent):
         self._new_cam_img = Signal()
         self._new_cam_img.connect(self._update_cam_image)
-        scene = QGraphicsScene()
-        parent.setScene(scene)
-        item = QGraphicsPixmapItem()
-        scene.addItem(item)
-        self._cam_fig = item
+        self._cam_fig = parent
 
     @tr.on_trait_change('_s:_cam:last_image')
     def _ccd_image_changed(self, event):
@@ -781,12 +777,15 @@ class ScanGui(tr.HasStrictTraits):
             ctbl = [qRgba(*c) for c in ctbl]
         img = QImage(bytes(event),event.shape[1],event.shape[0],QImage.Format_Indexed8)
         img.setColorTable(ctbl)
-        self._cam_img = QPixmap.fromImage(img)
+        print('there is a new image')
+        self._cam_img = img # QPixmap.fromImage(img)
         self._new_cam_img.emit()
 
     def _update_cam_image(self):
         img = self._cam_img
-        self._cam_fig.setPixmap(img)
+        self._cam_fig.image = img
+        print('request update')
+        self._cam_fig.update()
         self._cam_img = None
 
     def _create_scan_plot(self, parent):

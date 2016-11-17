@@ -16,7 +16,7 @@ _dB2natlog = np.log(10)/10
 _natlog2dB = 10/np.log(10)
 
 class RealFlyCam(RepeatingTaskRunner):
-    _cam = tr.Instance('api.Context')
+    _cam = tr.Any
 
     connected = tr.Bool(desc='read only')
 
